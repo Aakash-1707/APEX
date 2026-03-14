@@ -228,13 +228,15 @@ def build_grid_input(
             "fp3": fp_fallback_base,
         })
 
-        # Override reliability if weekend incidents reported
+        # Override reliability / extra context if weekend incidents reported
         inc = incidents.get(name, {})
         reliability_override = None
         if inc.get("crash_in_quali") or inc.get("dnf_in_practice"):
             reliability_override = 0.20
         elif inc.get("reliability_flag"):
             reliability_override = 0.60
+
+        sprint_perf = inc.get("sprint_perf")
 
         enriched.append({
             "driver": name,
@@ -243,6 +245,7 @@ def build_grid_input(
             "q_time": entry.get("q_time"),
             "fp":     fp,
             "reliability_override": reliability_override,
+            "sprint_perf": sprint_perf,
             "driver_number": entry.get("driver_number"),
             "team_colour":   entry.get("team_colour"),
         })
@@ -268,6 +271,7 @@ def compute_features_v4(driver_entry: dict, all_entries: list[dict], circuit: st
     q_time    = driver_entry.get("q_time")
     fp        = driver_entry["fp"]
     rel_override = driver_entry.get("reliability_override")
+    sprint_perf = driver_entry.get("sprint_perf")
 
     exp = DRIVER_EXPERIENCE.get(name, {"f1_seasons": 0, "career_poles": 0})
 
@@ -305,6 +309,17 @@ def compute_features_v4(driver_entry: dict, all_entries: list[dict], circuit: st
     # ── F3: FP2 race pace ─────────────────────────────────────────────────────
     fp2_gap  = fp.get("fp2", fp2_best + 2) - fp2_best
     race_pace = max(0.0, 1.0 - (fp2_gap / 3.0))
+
+    # Optional sprint race adjustment: if a completed Sprint exists, we pass in
+    # a normalised sprint_perf ∈ [0,1] where >0.5 means the driver outperformed
+    # their grid position in the Sprint. Blend this into race_pace so that
+    # race prediction uses FP + sprint evidence, without overriding the grid.
+    if sprint_perf is not None:
+        try:
+            sprint_val = float(sprint_perf)
+            race_pace = float(np.clip(0.7 * race_pace + 0.3 * sprint_val, 0.0, 1.0))
+        except (TypeError, ValueError):
+            pass
 
     # ── F4: Practice improvement trend (FP1 → FP3) ───────────────────────────
     fp1_gap = fp.get("fp1", fp3_best + 3) - fp3_best
@@ -474,7 +489,8 @@ def simulate_race_v4(predictions: list, circuit: str = "Australia") -> list:
 
 
 def run_monte_carlo_v4(predictions: list, n_sims: int = 100000, circuit: str = "Australia") -> list:
-    np.random.seed(42)
+    # Intentionally do not fix the RNG seed here so repeated predictions
+    # with identical inputs still explore Monte Carlo variance.
     win_counts    = defaultdict(int)
     podium_counts = defaultdict(int)
     points_counts = defaultdict(int)

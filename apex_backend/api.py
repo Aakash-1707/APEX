@@ -109,7 +109,7 @@ def _openf1(endpoint: str, params: dict = None, ttl: int = _DEFAULT_TTL) -> list
     return []
 
 
-# ─── PREDICTION CACHE ─────────────────────────────────────────────────────────
+# ─── PREDICTION + CIRCUIT STATS CACHE ─────────────────────────────────────────
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "prediction_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -133,6 +133,74 @@ def _save_cache(key: str, data: dict):
     path = os.path.join(CACHE_DIR, f"{key}.json")
     with open(path, "w") as f:
         json.dump(data, f)
+
+
+def _get_circuit_stats_from_openf1(circuit_key: int) -> Optional[dict]:
+    """
+    Estimate SC / VSC / rain probabilities for a circuit from recent race history.
+    Uses OpenF1 'sessions', 'race_control' and 'weather' endpoints across 2023–2025.
+    """
+    years = [2023, 2024, 2025]
+    race_sessions = []
+    for year in years:
+        try:
+            sess = _openf1("sessions", {
+                "year": year,
+                "circuit_key": circuit_key,
+                "session_type": "Race",
+            })
+            if isinstance(sess, list):
+                race_sessions.extend(sess)
+        except Exception:
+            continue
+
+    if not race_sessions:
+        return None
+
+    total_races = 0
+    sc_races = 0
+    vsc_races = 0
+    rain_races = 0
+
+    for s in race_sessions:
+        skey = s.get("session_key")
+        if not skey:
+            continue
+        total_races += 1
+
+        # Race control flags
+        try:
+            rc = _openf1("race_control", {"session_key": skey})
+        except Exception:
+            rc = []
+        if isinstance(rc, list):
+            flags = [str(e.get("flag", "")).upper() for e in rc]
+            has_sc = any("SAFETY CAR" in f and "VIRTUAL" not in f for f in flags)
+            has_vsc = any("VIRTUAL SAFETY CAR" in f for f in flags)
+            if has_sc:
+                sc_races += 1
+            if has_vsc:
+                vsc_races += 1
+
+        # Weather (rainfall flag)
+        try:
+            weather = _openf1("weather", {"session_key": skey})
+        except Exception:
+            weather = []
+        if isinstance(weather, list):
+            if any(w.get("rainfall") for w in weather):
+                rain_races += 1
+
+    if total_races == 0:
+        return None
+
+    stats = {
+        "sc_prob": sc_races / total_races,
+        "vsc_prob": vsc_races / total_races,
+        "rain_prob": rain_races / total_races,
+        "n_races": total_races,
+    }
+    return stats
 
 
 # ─── HEALTH ───────────────────────────────────────────────────────────────────
@@ -604,18 +672,6 @@ def predict(req: PredictRequest):
     - If only practice/sprint quali → estimate grid from best available data
     - If no session data → use driver list with team-based estimates
     """
-    cache_key = _prediction_cache_key(
-        req.meeting_key,
-        req.session_key,
-        req.race_session_key,
-        req.n_sims,
-        getattr(req, "source_mode", "auto") or "auto",
-    )
-    if not req.force_refresh:
-        cached = _load_cache(cache_key)
-        if cached:
-            return {**cached, "cached": True}
-
     # Gather all sessions for this meeting
     try:
         sessions = _openf1("sessions", {"meeting_key": req.meeting_key})
@@ -646,6 +702,39 @@ def predict(req: PredictRequest):
                     break
             except Exception:
                 pass
+
+    # Apply dynamic circuit SC/VSC/rain probabilities from OpenF1 when available
+    try:
+        circuit_key = None
+        for s in sessions:
+            if s.get("circuit_key"):
+                circuit_key = s["circuit_key"]
+                break
+        if circuit_key is not None:
+            dynamic_stats = _get_circuit_stats_from_openf1(circuit_key)
+            if dynamic_stats:
+                # Blend historical stats with prior and avoid hard 0%/100% extremes
+                base = mc.CIRCUIT_PARAMS.get(req.circuit, mc.CIRCUIT_PARAMS.get("Australia", {})).copy()
+                prior_sc = base.get("sc_prob", 0.5)
+                prior_vsc = base.get("vsc_prob", 0.25)
+                prior_rain = base.get("rain_prob", 0.15)
+                emp_sc = float(dynamic_stats.get("sc_prob", prior_sc))
+                emp_vsc = float(dynamic_stats.get("vsc_prob", prior_vsc))
+                emp_rain = float(dynamic_stats.get("rain_prob", prior_rain))
+                blend = 0.5  # 50% prior, 50% empirical
+
+                def _blend(prior: float, empirical: float, floor: float = 0.05, ceil: float = 0.95) -> float:
+                    v = prior * (1.0 - blend) + empirical * blend
+                    return max(floor, min(ceil, v))
+
+                base.update({
+                    "sc_prob": _blend(prior_sc, emp_sc, floor=0.05),
+                    "vsc_prob": _blend(prior_vsc, emp_vsc, floor=0.02),
+                    "rain_prob": _blend(prior_rain, emp_rain, floor=0.01),
+                })
+                mc.CIRCUIT_PARAMS[req.circuit] = base
+    except Exception:
+        pass
 
     # Strategy: try data sources in order of quality
     qualifying = []
@@ -800,12 +889,40 @@ def predict(req: PredictRequest):
     except Exception:
         pass
 
+    # Build optional weekend_incidents with sprint performance for race prediction
+    weekend_incidents: dict[str, dict] = {}
+    try:
+        sprint_session = next(
+            (s for s in sessions if s.get("session_name") == "Sprint" and s.get("status") == "completed"),
+            None,
+        )
+        if sprint_session:
+            sprint_results = _openf1("session_result", {"session_key": sprint_session["session_key"]})
+            if isinstance(sprint_results, list) and sprint_results:
+                sprint_pos = {r["driver_number"]: r.get("position", 22) for r in sprint_results}
+                qual_pos = {q["driver_number"]: q["pos"] for q in qualifying if q.get("driver_number") is not None}
+                for q in qualifying:
+                    dn = q.get("driver_number")
+                    if not dn or dn not in sprint_pos or dn not in qual_pos:
+                        continue
+                    qpos = qual_pos[dn]
+                    spos = sprint_pos[dn]
+                    # Positive delta means gained positions vs grid in Sprint
+                    delta = qpos - spos
+                    # Normalise: base 0.5, ±0.05 per position change, clipped to [0,1]
+                    sprint_perf = max(0.0, min(1.0, 0.5 + 0.05 * delta))
+                    name = q["driver"]
+                    weekend_incidents.setdefault(name, {})["sprint_perf"] = sprint_perf
+    except Exception:
+        weekend_incidents = {}
+
     # Run model pipeline
     result = mc.run_prediction_pipeline(
         qualifying=qualifying,
         fp_times=fp_times,
         circuit=req.circuit,
         n_sims=req.n_sims,
+        weekend_incidents=weekend_incidents,
     )
 
     output = {
@@ -817,7 +934,6 @@ def predict(req: PredictRequest):
         **result,
         "cached":           False,
     }
-    _save_cache(cache_key, output)
     return output
 
 
