@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { T, apiFetch, Tag, Card, Spinner, ErrorBanner } from "./theme";
 import TelemetryTab from "./TelemetryTab";
 import TyreDegTab from "./TyreDegTab";
@@ -143,7 +143,7 @@ function RaceSelector({calendar, selectedKey, onSelect}) {
 function SessionBar({sessions, session, setSession}) {
   if (!sessions?.length) return null;
   return(
-    <div style={{display:"flex",gap:"4px",marginBottom:"16px",overflowX:"auto"}}>
+    <div style={{display:"flex",gap:"4px",marginBottom:"16px"}}>
       {sessions.map(s=>(
         <button key={s.session_key} onClick={()=>setSession(s)} style={{
           padding:"5px 14px",fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",
@@ -170,7 +170,7 @@ function TabBar({tab, setTab, sessions}) {
   tabs.push("Quali Prediction", "Race Prediction");
 
   return(
-    <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,marginBottom:"20px",overflowX:"auto"}}>
+    <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,marginBottom:"20px"}}>
       {tabs.map(t=>(
         <button key={t} onClick={()=>setTab(t)} style={{
           padding:"10px 20px",fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",
@@ -199,6 +199,7 @@ export default function APEX() {
   const [predError, setPredError] = useState(null);
   const [qualiNotReady, setQualiNotReady] = useState(false);
   const [apiOnline, setApiOnline] = useState(null);
+  const [lastSourceMode, setLastSourceMode] = useState("auto");
 
   // Check API health
   useEffect(() => {
@@ -240,8 +241,7 @@ export default function APEX() {
       .catch(() => {});
   }, [activeSession]);
 
-  // Run prediction when session changes — always predicts using best available data
-  useEffect(() => {
+  const runPrediction = useCallback(() => {
     if (!selectedKey || sessions.length === 0) return;
 
     // Determine which type of race/quali we are predicting based on the active tab
@@ -267,6 +267,18 @@ export default function APEX() {
     const selected = calendar.find(r => r.meeting_key === selectedKey);
     const circuit = selected?.circuit_short_name || "Australia";
 
+    const hasSprint = sessions.some(s => s.session_name.toLowerCase().includes("sprint"));
+    let sourceMode = "auto";
+    if (!hasSprint) {
+      if (tab === "Quali Prediction") sourceMode = "fp_only";
+      else if (tab === "Race Prediction") sourceMode = "full_quali";
+    } else {
+      if (tab === "Sprint Quali Pred") sourceMode = "fp_only";              // FP1 only weekend
+      else if (tab === "Sprint Race Pred") sourceMode = "sprint_quali";     // FP1 + Sprint Quali
+      else if (tab === "Quali Prediction") sourceMode = "sprint_quali";     // Practice + Sprint Quali
+      else if (tab === "Race Prediction") sourceMode = "full_quali";        // All data incl. full quali
+    }
+
     setPredLoading(true); setPredError(null); setPredictions(null); setQualiNotReady(false);
 
     const abortController = new AbortController();
@@ -280,12 +292,14 @@ export default function APEX() {
         race_session_key: targetRaceSession?.session_key || null,
         meeting_key: selectedKey,
         circuit: circuit,
-        n_sims: 100000, 
+        n_sims: 100000,
+        source_mode: sourceMode,
       }),
     })
     .then(data => {
       setPredictions(data.predictions);
       setModelMeta({...data.model_meta, prediction_basis: data.prediction_basis});
+      setLastSourceMode(sourceMode);
       setPredLoading(false);
     })
     .catch(e => {
@@ -353,6 +367,24 @@ export default function APEX() {
         {predError && <ErrorBanner message={predError} onRetry={()=>setSelectedKey(selectedKey)} style={{marginBottom:"16px"}}/>}
 
         <SessionBar sessions={sessions} session={activeSession} setSession={setActiveSession}/>
+        <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"8px",flexWrap:"wrap"}}>
+          <button
+            onClick={runPrediction}
+            disabled={!selectedKey || sessions.length === 0 || predLoading}
+            style={{
+              fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",
+              padding:"5px 14px",
+              borderRadius:T.radiusSm,
+              border:`1px solid ${predLoading ? T.border2 : T.red}`,
+              background:predLoading ? "transparent" : "rgba(232,0,45,0.12)",
+              color:predLoading ? T.dim2 : T.red,
+              cursor:predLoading ? "default" : "pointer",
+              textTransform:"uppercase"
+            }}
+          >
+            {predLoading ? "RUNNING..." : "PREDICT"}
+          </button>
+        </div>
         <TabBar tab={tab} setTab={setTab} sessions={sessions}/>
 
         {tab==="Telemetry" && (
@@ -364,12 +396,15 @@ export default function APEX() {
             mode={activeSession?.status || mode}/>
         )}
         {tab==="Sprint Quali Pred" && (
-          <QualiPredictionTab
-            sessionKey={sessions.find(s=>s.session_name.includes("Sprint Shootout") || s.session_name.includes("Sprint Qualifying"))?.session_key}
-            drivers={drivers} mode={mode}
-            predictions={predLoading?null:predictions}
-            modelMeta={modelMeta}
-            qualiNotReady={false}/>
+          predLoading
+            ? <Spinner label={`Running ${(100000).toLocaleString()} Monte Carlo simulations...`}/>
+            : <QualiPredictionTab
+                sessionKey={sessions.find(s=>s.session_name.includes("Sprint Shootout") || s.session_name.includes("Sprint Qualifying"))?.session_key}
+                drivers={drivers} mode={mode}
+                predictions={predictions}
+                modelMeta={modelMeta}
+                sourceMode={lastSourceMode}
+                qualiNotReady={false}/>
         )}
         {tab==="Sprint Race Pred" && (
           predLoading
@@ -378,15 +413,19 @@ export default function APEX() {
                 raceSessionKey={sessions.find(s=>s.session_name.includes("Sprint") && !s.session_name.includes("Shootout") && !s.session_name.includes("Qualifying"))?.session_key}
                 drivers={drivers} mode={mode}
                 predictions={predictions} modelMeta={modelMeta}
+                sourceMode={lastSourceMode}
                 qualiNotReady={qualiNotReady}/>
         )}
         {tab==="Quali Prediction" && (
-          <QualiPredictionTab
-            sessionKey={sessions.find(s=>s.session_name==="Qualifying")?.session_key}
-            drivers={drivers} mode={mode}
-            predictions={predLoading?null:predictions}
-            modelMeta={modelMeta}
-            qualiNotReady={false}/>
+          predLoading
+            ? <Spinner label={`Running ${(100000).toLocaleString()} Monte Carlo simulations...`}/>
+            : <QualiPredictionTab
+                sessionKey={sessions.find(s=>s.session_name==="Qualifying")?.session_key}
+                drivers={drivers} mode={mode}
+                predictions={predictions}
+                modelMeta={modelMeta}
+                sourceMode={lastSourceMode}
+                qualiNotReady={false}/>
         )}
         {tab==="Race Prediction" && (
           predLoading
@@ -395,6 +434,7 @@ export default function APEX() {
                 raceSessionKey={sessions.find(s=>s.session_name==="Race")?.session_key}
                 drivers={drivers} mode={mode}
                 predictions={predictions} modelMeta={modelMeta}
+                sourceMode={lastSourceMode}
                 qualiNotReady={qualiNotReady}/>
         )}
       </div>

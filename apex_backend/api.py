@@ -115,8 +115,9 @@ CACHE_DIR = os.path.join(os.path.dirname(__file__), "prediction_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 
-def _cache_key(session_key: int, n_sims: int) -> str:
-    raw = f"openf1_{session_key}_{n_sims}"
+def _prediction_cache_key(meeting_key: int, session_key: Optional[int], race_session_key: Optional[int], n_sims: int, source_mode: str) -> str:
+    """Include quali + race session + source mode so different inputs get separate caches."""
+    raw = f"openf1_{meeting_key}_{session_key or 0}_{race_session_key or 0}_{n_sims}_{source_mode}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
@@ -205,19 +206,22 @@ def get_calendar(year: int = Query(2026)):
 @app.get("/api/sessions/{meeting_key}")
 def get_sessions(meeting_key: int):
     """Get all sessions for a meeting (FP1, Quali, Sprint, Race, etc.)."""
-    sessions = _openf1("sessions", {"meeting_key": meeting_key})
+    try:
+        sessions = _openf1("sessions", {"meeting_key": meeting_key})
+    except Exception:
+        sessions = []
 
     if not isinstance(sessions, list):
         sessions = []
 
-    # Fallback for Chinese GP (Meeting 1280) if API is restricted
+    # Fallback for Chinese GP (Meeting 1280) if API is restricted — use real OpenF1 session keys
     if not sessions and meeting_key == 1280:
         sessions = [
-            {"session_key": 9495, "session_name": "Practice 1", "session_type": "Practice", "date_start": "2026-03-13T03:30:00+00:00", "date_end": "2026-03-13T04:30:00+00:00"},
-            {"session_key": 9496, "session_name": "Sprint Qualifying", "session_type": "Qualifying", "date_start": "2026-03-13T07:30:00+00:00", "date_end": "2026-03-13T08:14:00+00:00"},
-            {"session_key": 9497, "session_name": "Sprint", "session_type": "Race", "date_start": "2026-03-14T03:00:00+00:00", "date_end": "2026-03-14T04:00:00+00:00"},
-            {"session_key": 9498, "session_name": "Qualifying", "session_type": "Qualifying", "date_start": "2026-03-14T07:00:00+00:00", "date_end": "2026-03-14T08:00:00+00:00"},
-            {"session_key": 9499, "session_name": "Race", "session_type": "Race", "date_start": "2026-03-15T07:00:00+00:00", "date_end": "2026-03-15T09:00:00+00:00"},
+            {"session_key": 11235, "session_name": "Practice 1", "session_type": "Practice", "date_start": "2026-03-13T03:30:00+00:00", "date_end": "2026-03-13T04:30:00+00:00"},
+            {"session_key": 11236, "session_name": "Sprint Qualifying", "session_type": "Qualifying", "date_start": "2026-03-13T07:30:00+00:00", "date_end": "2026-03-13T08:14:00+00:00"},
+            {"session_key": 11240, "session_name": "Sprint", "session_type": "Race", "date_start": "2026-03-14T03:00:00+00:00", "date_end": "2026-03-14T04:00:00+00:00"},
+            {"session_key": 11241, "session_name": "Qualifying", "session_type": "Qualifying", "date_start": "2026-03-14T07:00:00+00:00", "date_end": "2026-03-14T08:00:00+00:00"},
+            {"session_key": 11245, "session_name": "Race", "session_type": "Race", "date_start": "2026-03-15T07:00:00+00:00", "date_end": "2026-03-15T09:00:00+00:00"},
         ]
 
     now = datetime.now(timezone.utc)
@@ -266,6 +270,65 @@ def get_drivers(session_key: int):
 
 # ─── TELEMETRY ────────────────────────────────────────────────────────────────
 
+def _parse_ts(s: str) -> float:
+    """Parse ISO timestamp to seconds-since-epoch for comparison."""
+    if not s:
+        return 0.0
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
+def _merge_telemetry_by_timestamp(car_data: list, location_data: list) -> list:
+    """
+    Merge car_data and location by timestamp so each point has aligned x,y,speed,brake.
+    Uses car_data as primary; for each car point, finds nearest location by timestamp.
+    """
+    if not car_data:
+        return []
+
+    # Build location lookup by timestamp (sorted)
+    loc_by_ts = []
+    for loc in (location_data or []):
+        ts = _parse_ts(loc.get("date", ""))
+        if ts > 0:
+            loc_by_ts.append((ts, loc.get("x", 0), loc.get("y", 0)))
+    loc_by_ts.sort(key=lambda r: r[0])
+
+    def find_nearest_loc(target_ts: float):
+        if not loc_by_ts:
+            return 0, 0
+        lo, hi = 0, len(loc_by_ts) - 1
+        while lo < hi - 1:
+            mid = (lo + hi) // 2
+            if loc_by_ts[mid][0] <= target_ts:
+                lo = mid
+            else:
+                hi = mid
+        # Pick closer of lo, hi
+        d_lo = abs(loc_by_ts[lo][0] - target_ts)
+        d_hi = abs(loc_by_ts[hi][0] - target_ts)
+        best = lo if d_lo <= d_hi else hi
+        return loc_by_ts[best][1], loc_by_ts[best][2]
+
+    merged = []
+    for c in car_data:
+        ts = _parse_ts(c.get("date", ""))
+        x, y = find_nearest_loc(ts)
+        merged.append({
+            "speed": c.get("speed", 0),
+            "throttle": c.get("throttle", 0),
+            "brake": c.get("brake", 0),
+            "n_gear": c.get("n_gear", 0),
+            "drs": c.get("drs", 0),
+            "date": c.get("date", ""),
+            "x": x,
+            "y": y,
+        })
+    return merged
+
+
 @app.get("/api/telemetry/{session_key}/{driver_number}")
 def get_telemetry(
     session_key: int,
@@ -273,16 +336,14 @@ def get_telemetry(
     lap: Optional[int] = Query(None),
 ):
     """
-    Fetch car telemetry + location data for a driver.
-    If lap is specified, fetch data for that lap only.
-    Returns sampled arrays of ~300 points.
+    Fetch car telemetry + location data for a driver from OpenF1.
+    Merges car_data and location by timestamp for accurate track map alignment.
+    Returns ~300 points with x,y,speed,brake aligned per timestamp.
     """
     try:
-        # First, get lap info to determine time range
-        laps_params = {
-            "session_key": session_key,
-            "driver_number": driver_number,
-        }
+        from datetime import timedelta
+
+        laps_params = {"session_key": session_key, "driver_number": driver_number}
         if lap is not None:
             laps_params["lap_number"] = lap
 
@@ -290,7 +351,6 @@ def get_telemetry(
         if not laps_data:
             return _empty_telemetry()
 
-        # Pick the fastest lap if no specific lap requested
         if lap is None:
             valid_laps = [l for l in laps_data
                           if l.get("lap_duration") and l["lap_duration"] > 0
@@ -308,71 +368,65 @@ def get_telemetry(
         if not lap_start:
             return _empty_telemetry()
 
-        # Calculate approximate lap end time
         lap_duration = target_lap.get("lap_duration", 90)
-        start_dt = datetime.fromisoformat(lap_start)
-        from datetime import timedelta
+        start_dt = datetime.fromisoformat(lap_start.replace("Z", "+00:00"))
         end_dt = start_dt + timedelta(seconds=lap_duration + 1)
 
-        # Fetch car data for this lap's time window
-        car_params = {
+        car_data = _openf1("car_data", {
             "session_key": session_key,
             "driver_number": driver_number,
             "date>": lap_start,
             "date<": end_dt.isoformat(),
-        }
-        car_data = _openf1("car_data", car_params)
+        })
 
-        # Fetch location data for this lap's time window
-        loc_params = {
+        location_data = _openf1("location", {
             "session_key": session_key,
             "driver_number": driver_number,
             "date>": lap_start,
             "date<": end_dt.isoformat(),
-        }
-        location_data = _openf1("location", loc_params)
+        })
 
         if not car_data:
             return _empty_telemetry()
 
-        # Sample to ~300 points
-        n_target = 300
-        n_raw = len(car_data)
+        # Merge by timestamp for accurate alignment
+        merged = _merge_telemetry_by_timestamp(car_data, location_data)
+        if not merged:
+            return _empty_telemetry()
+
+        # Sample to ~400 points for smoother track (OpenF1 ~3.7 Hz, 90s lap ≈ 333 raw)
+        n_target = 400
+        n_raw = len(merged)
         step = max(1, n_raw // n_target)
-        sampled_car = car_data[::step][:n_target]
+        sampled = merged[::step][:n_target]
 
-        # Build telemetry arrays
-        speed = [d.get("speed", 0) for d in sampled_car]
-        throttle = [d.get("throttle", 0) for d in sampled_car]
-        brake = [d.get("brake", 0) for d in sampled_car]
-        gear = [d.get("n_gear", 0) for d in sampled_car]
-        drs = [d.get("drs", 0) for d in sampled_car]
-        timestamps = [d.get("date", "") for d in sampled_car]
+        speed = [d["speed"] for d in sampled]
+        throttle = [d["throttle"] for d in sampled]
+        brake = [d["brake"] for d in sampled]
+        gear = [d["n_gear"] for d in sampled]
+        drs = [d["drs"] for d in sampled]
+        timestamps = [d["date"] for d in sampled]
+        x_raw = [d["x"] for d in sampled]
+        y_raw = [d["y"] for d in sampled]
 
-        # Build location arrays — match to sampled timestamps
-        x_raw, y_raw = [], []
-        if location_data:
-            n_loc = len(location_data)
-            loc_step = max(1, n_loc // n_target)
-            sampled_loc = location_data[::loc_step][:n_target]
-            x_raw = [d.get("x", 0) for d in sampled_loc]
-            y_raw = [d.get("y", 0) for d in sampled_loc]
-
-        # Normalize X/Y to 0-1 for frontend rendering
+        # Normalize X/Y to 0-1 (preserve aspect for track shape)
         x_norm, y_norm = [], []
-        if x_raw and y_raw:
+        if x_raw and any(x != 0 for x in x_raw) and any(y != 0 for y in y_raw):
             x_min, x_max = min(x_raw), max(x_raw)
             y_min, y_max = min(y_raw), max(y_raw)
             x_range = x_max - x_min or 1
             y_range = y_max - y_min or 1
             x_norm = [round((v - x_min) / x_range, 4) for v in x_raw]
             y_norm = [round((v - y_min) / y_range, 4) for v in y_raw]
+        else:
+            x_norm = x_raw
+            y_norm = y_raw
 
         return {
             "driver_number": driver_number,
             "lap":          lap_number,
             "lap_time":     round(target_lap.get("lap_duration", 0), 3),
-            "n_points":     len(sampled_car),
+            "n_points":     len(sampled),
             "speed":        speed,
             "throttle":     throttle,
             "brake":        brake,
@@ -404,6 +458,17 @@ def _empty_telemetry() -> dict:
 
 # ─── LAPS ─────────────────────────────────────────────────────────────────────
 
+def _lap_duration(lap: dict) -> Optional[float]:
+    """lap_duration from API, or computed from sectors when null (common for Sprint)."""
+    d = lap.get("lap_duration")
+    if d is not None and d > 0:
+        return float(d)
+    s1, s2, s3 = lap.get("duration_sector_1"), lap.get("duration_sector_2"), lap.get("duration_sector_3")
+    if s1 is not None and s2 is not None and s3 is not None:
+        return float(s1) + float(s2) + float(s3)
+    return None
+
+
 @app.get("/api/laps/{session_key}/{driver_number}")
 def get_laps(session_key: int, driver_number: int):
     """Fetch all laps with sector times for a driver."""
@@ -413,7 +478,7 @@ def get_laps(session_key: int, driver_number: int):
     })
     return [{
         "lap_number":   l["lap_number"],
-        "lap_duration": l.get("lap_duration"),
+        "lap_duration": _lap_duration(l),
         "s1":           l.get("duration_sector_1"),
         "s2":           l.get("duration_sector_2"),
         "s3":           l.get("duration_sector_3"),
@@ -522,6 +587,12 @@ class PredictRequest(BaseModel):
     circuit: str = "Australia"
     n_sims: int = 100000
     force_refresh: bool = False
+    # How to choose the data source for building the grid:
+    # "auto"          → current behaviour (qualifying if available, else sprint quali / practice / team rankings)
+    # "full_quali"    → force main Qualifying session
+    # "sprint_quali"  → force Sprint Qualifying / Sprint Shootout
+    # "fp_only"       → ignore qualifying and sprint quali, estimate from practice / team rankings
+    source_mode: str = "auto"
 
 
 @app.post("/api/predict")
@@ -533,7 +604,13 @@ def predict(req: PredictRequest):
     - If only practice/sprint quali → estimate grid from best available data
     - If no session data → use driver list with team-based estimates
     """
-    cache_key = _cache_key(req.meeting_key, req.n_sims)
+    cache_key = _prediction_cache_key(
+        req.meeting_key,
+        req.session_key,
+        req.race_session_key,
+        req.n_sims,
+        getattr(req, "source_mode", "auto") or "auto",
+    )
     if not req.force_refresh:
         cached = _load_cache(cache_key)
         if cached:
@@ -573,13 +650,44 @@ def predict(req: PredictRequest):
     # Strategy: try data sources in order of quality
     qualifying = []
     prediction_basis = "estimated"
+    source_mode = getattr(req, "source_mode", "auto") or "auto"
 
-    # 1) Try actual qualifying results
-    if req.session_key:
+    # 1) Try actual qualifying results, depending on source_mode
+    target_session_key: Optional[int] = None
+    target_label = None
+
+    if source_mode == "full_quali":
+        q_sess = next(
+            (s for s in sessions if s["session_name"] == "Qualifying" and s.get("status") == "completed"),
+            None,
+        )
+        if q_sess:
+            target_session_key = q_sess["session_key"]
+            target_label = "Qualifying"
+    elif source_mode == "sprint_quali":
+        q_sess = next(
+            (
+                s for s in sessions
+                if s["session_name"] in ("Sprint Qualifying", "Sprint Shootout") and s.get("status") == "completed"
+            ),
+            None,
+        )
+        if q_sess:
+            target_session_key = q_sess["session_key"]
+            target_label = q_sess["session_name"]
+    elif source_mode == "auto" and req.session_key:
+        target_session_key = req.session_key
+        target_label = "Qualifying"
+
+    if target_session_key:
         try:
-            quali_results = _openf1("session_result", {"session_key": req.session_key})
+            quali_results = _openf1("session_result", {"session_key": target_session_key})
             if quali_results:
-                prediction_basis = "qualifying"
+                prediction_basis = (
+                    "qualifying"
+                    if source_mode == "auto"
+                    else f"qualifying ({target_label or 'manual'})"
+                )
                 for r in sorted(quali_results, key=lambda x: x.get("position") or 99):
                     dn = r["driver_number"]
                     d = driver_map.get(dn, {})
@@ -605,10 +713,18 @@ def predict(req: PredictRequest):
         except Exception:
             pass
 
-    # 2) If no quali data, try sprint qualifying or practice results
+    # 2) If no quali data yet, try sprint qualifying or practice results
     if not qualifying:
-        # Try sessions in priority order: Sprint Qualifying > Practice 3 > Practice 2 > Practice 1
-        priority = ["Sprint Qualifying", "Practice 3", "Practice 2", "Practice 1"]
+        # Choose priority based on requested source_mode
+        if source_mode == "fp_only":
+            priority = ["Practice 3", "Practice 2", "Practice 1"]
+        elif source_mode == "sprint_quali":
+            priority = ["Sprint Qualifying", "Sprint Shootout"]
+        elif source_mode == "full_quali":
+            priority = ["Qualifying"]
+        else:
+            # auto
+            priority = ["Sprint Qualifying", "Sprint Shootout", "Practice 3", "Practice 2", "Practice 1"]
         for pname in priority:
             target = next((s for s in sessions if s["session_name"] == pname and s.get("status") == "completed"), None)
             if not target:

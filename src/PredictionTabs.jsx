@@ -18,8 +18,15 @@ function DeltaBadge({predicted, actual}) {
   );
 }
 
+function humanReadableSource(sourceMode, predictionBasis) {
+  if (sourceMode === "fp_only") return "Practice only (no quali data)";
+  if (sourceMode === "sprint_quali") return "Sprint qualifying only";
+  if (sourceMode === "full_quali") return "Full qualifying result";
+  return predictionBasis || "auto";
+}
+
 // ─── QUALIFYING PREDICTION TAB ───────────────────────────────────────────────
-export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, modelMeta }) {
+export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, modelMeta, sourceMode }) {
   const [result, setResult] = useState(null);
 
   useEffect(() => {
@@ -44,7 +51,7 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
     });
   }
 
-  const hasActual = mode === "past" && result && result.length > 0;
+  const hasActual = result && result.length > 0;
   const groups = [
     {label:"Q3 · TOP 10", key:"q3", color:T.red, items:sorted.slice(0,10)},
     {label:"Q2 · P11–15", key:"q2", color:T.yellow, items:sorted.slice(10,15)},
@@ -67,9 +74,12 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
         <div style={{display:"flex",flexDirection:"column",gap:"16px",marginTop:"12px"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 4px"}}>
             <SectionHeader title="Grid prediction · model accuracy"/>
-            {modelMeta?.prediction_basis && (
+            {modelMeta && (
               <div style={{fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,textTransform:"uppercase"}}>
-                DATA SOURCE: <span style={{color:T.accent}}>{modelMeta.prediction_basis}</span>
+                DATA SOURCE:{" "}
+                <span style={{color:T.accent}}>
+                  {humanReadableSource(sourceMode, modelMeta.prediction_basis)}
+                </span>
               </div>
             )}
           </div>
@@ -198,23 +208,24 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
 }
 
 // ─── RACE PREDICTION TAB ─────────────────────────────────────────────────────
-export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, modelMeta }) {
+export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, modelMeta, sourceMode }) {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!raceSessionKey || mode !== "past") return;
+    if (!raceSessionKey) return;
     setLoading(true);
     apiFetch(`/result/${raceSessionKey}`)
       .then(setResult)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [raceSessionKey, mode]);
+  }, [raceSessionKey]);
 
   if (!predictions?.length) return <Spinner label="Loading predictions..."/>;
 
   const sorted = [...predictions].sort((a,b) => b.win_pct - a.win_pct);
-  const hasActual = mode === "past" && result && result.length > 0;
+  // Show actual vs predicted as soon as a session result exists (works for Sprint + main race)
+  const hasActual = result && result.length > 0;
 
   // Build actual results lookup
   const actualMap = {};
@@ -256,9 +267,12 @@ export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, 
       <Card>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
           <SectionHeader title="Race prediction · Monte Carlo results" style={{marginBottom:0}}/>
-          {modelMeta?.prediction_basis && (
+          {modelMeta && (
             <div style={{fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,textTransform:"uppercase"}}>
-              DATA SOURCE: <span style={{color:T.accent}}>{modelMeta.prediction_basis}</span>
+              DATA SOURCE:{" "}
+              <span style={{color:T.accent}}>
+                {humanReadableSource(sourceMode, modelMeta.prediction_basis)}
+              </span>
             </div>
           )}
         </div>

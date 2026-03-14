@@ -8,12 +8,14 @@ Pipeline:
   raw FastF1 data
     → build_grid_input()       normalise FastF1 → model-ready dicts
     → compute_features_v4()    10 features per driver
-    → compute_raw_score()      weighted sum
+    → compute_raw_score()      weighted sum (with team priors + season adjustments)
     → softmax_scores()         probability distribution
     → run_monte_carlo_v4()     100k race simulations
     → predictions JSON         returned to API / frontend
 """
 
+import json
+import os
 import numpy as np
 from collections import defaultdict
 from typing import Optional
@@ -25,7 +27,7 @@ from typing import Optional
 POLE_WIN_RATE_2026  = 0.45   # down from 0.60 — active aero makes overtaking easier
 OVERTAKE_FACTOR     = 1.4    # 40% more position changes than old regs
 ENERGY_UNCERTAINTY  = 0.04   # first race with new PUs
-SOFTMAX_TEMP        = 0.14   # higher than v3 (0.12) → more uncertainty
+SOFTMAX_TEMP        = 0.10   # slightly cooler than v3 → fewer extreme long-shots
 LAP1_INCIDENT_PROB  = 0.35   # 22-car grid + new start procedure
 SC_PROB             = 0.55   # Albert Park historical (~circuit-specific, overridable)
 VSC_PROB            = 0.25
@@ -85,6 +87,51 @@ WEIGHTS_V4 = {
 # Normalise to exactly 1.0
 _total = sum(WEIGHTS_V4.values())
 WEIGHTS_V4 = {k: round(v / _total, 6) for k, v in WEIGHTS_V4.items()}
+
+
+# ─── TEAM TIER PRIORS + SEASON ADJUSTMENTS ───────────────────────────────────
+
+TEAM_TIER_PRIOR = {
+    "Mercedes": 0.20,
+    "Ferrari": 0.16,
+    "McLaren": 0.14,
+    "Red Bull Racing": 0.10,
+    "Aston Martin": 0.00,
+    "Alpine": -0.05,
+    "Williams": -0.08,
+    "Racing Bulls": -0.10,
+    "Haas F1 Team": -0.12,
+    "Kick Sauber": -0.20,
+    "Audi": -0.26,
+    "Cadillac": -0.30,
+}
+
+TEAM_TIER_ADJUST: dict[str, float] = {}
+_adjust_path = os.path.join(os.path.dirname(__file__), "team_adjustments_2026.json")
+try:
+    if os.path.exists(_adjust_path):
+        with open(_adjust_path) as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    try:
+                        TEAM_TIER_ADJUST[k] = float(v)
+                    except (TypeError, ValueError):
+                        continue
+except Exception:
+    TEAM_TIER_ADJUST = {}
+
+
+def get_team_tier_boost(team: str) -> float:
+    """
+    Base team tier prior + optional 2026 season adjustment.
+
+    TEAM_TIER_PRIOR encodes pre-season expectations.
+    TEAM_TIER_ADJUST (from team_adjustments_2026.json) lets you nudge teams up/down
+    as the season unfolds based on real results.
+    """
+    base = TEAM_TIER_PRIOR.get(team, -0.10)
+    return base + TEAM_TIER_ADJUST.get(team, 0.0)
 
 
 # ─── DRIVER EXPERIENCE TABLE ──────────────────────────────────────────────────
@@ -331,15 +378,10 @@ def compute_features_v4(driver_entry: dict, all_entries: list[dict], circuit: st
 
 def compute_raw_score(features: dict, team: str) -> float:
     base_score = sum(features.get(k, 0) * w for k, w in WEIGHTS_V4.items())
-    
-    # Apply innate team tier multiplier to ensure grid separation
-    # when practice/quali data is entirely missing.
-    tier_boost = {
-        "Mercedes": 0.20, "Ferrari": 0.16, "McLaren": 0.14, "Red Bull Racing": 0.10,
-        "Aston Martin": 0.0, "Alpine": -0.05, "Williams": -0.08, "Racing Bulls": -0.10,
-        "Haas F1 Team": -0.12, "Kick Sauber": -0.18, "Audi": -0.18, "Cadillac": -0.22
-    }
-    return base_score + tier_boost.get(team, -0.10)
+    # Apply innate team tier prior + optional 2026 season adjustment.
+    # This ensures realistic separation when practice/quali data is sparse,
+    # but still allows teams to improve as TEAM_TIER_ADJUST is updated.
+    return base_score + get_team_tier_boost(team)
 
 
 def softmax_scores(scores: list, temperature: float = SOFTMAX_TEMP) -> np.ndarray:

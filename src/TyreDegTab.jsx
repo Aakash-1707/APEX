@@ -57,9 +57,13 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
           const d = drivers.find(dr => dr.driver_number === dn);
           const lapTimes = new Array(maxLap).fill(null);
           (lapData[dn] || []).forEach(l => {
-            if (l.lap_duration && l.lap_duration > 0 && !l.is_pit_out && l.lap_number <= maxLap) {
-              lapTimes[l.lap_number - 1] = l.lap_duration;
+            if (l.is_pit_out || l.lap_number > maxLap) return;
+            let duration = l.lap_duration;
+            if (!duration || duration <= 0) {
+              const s1 = l.s1, s2 = l.s2, s3 = l.s3;
+              if (s1 != null && s2 != null && s3 != null) duration = s1 + s2 + s3;
             }
+            if (duration && duration > 0) lapTimes[l.lap_number - 1] = duration;
           });
           return {
             label: d?.name_acronym || `#${dn}`,
@@ -68,9 +72,14 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
             borderWidth: 1.5, backgroundColor: "transparent",
             pointRadius: 0, fill: false, tension: 0.3, spanGaps: true,
           };
-        });
+        })
+        .filter(ds => ds.data.some(v => v != null));
 
       chartInst.current?.destroy?.();
+      if (datasets.length === 0) {
+        chartInst.current = null;
+        return;
+      }
       chartInst.current = new window.Chart(chartRef.current.getContext("2d"), {
         type: "line", data: { labels, datasets },
         options: {
@@ -106,6 +115,13 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
 
   const allDriverNums = Object.keys(stints).map(Number);
 
+  const hasAnyLapTimes = allDriverNums.some(dn => (lapData[dn] || []).some(l => {
+    if (l.is_pit_out) return false;
+    if (l.lap_duration && l.lap_duration > 0) return true;
+    const s1 = l.s1, s2 = l.s2, s3 = l.s3;
+    return s1 != null && s2 != null && s3 != null;
+  }));
+
   return(
     <div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px",marginBottom:"16px"}}>
@@ -139,7 +155,16 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
               })}
             </div>
           </div>
-          <div style={{height:"280px"}}><canvas ref={chartRef}/></div>
+          <div style={{height:"280px",position:"relative"}}>
+            <canvas ref={chartRef}/>
+            {!hasAnyLapTimes && (
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
+                background:"rgba(0,0,0,0.3)",fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,letterSpacing:"2px",textAlign:"center",padding:24}}>
+                LAP TIMES NOT YET AVAILABLE<br/>
+                <span style={{fontSize:"9px",marginTop:"6px",opacity:0.8}}>OpenF1 may still be processing this session</span>
+              </div>
+            )}
+          </div>
         </Card>
 
         <Card>

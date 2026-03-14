@@ -1,4 +1,4 @@
-// APEX Telemetry Tab — Track map + driver comparison
+// APEX Telemetry Tab — Track map + driver comparison (fastest lap only)
 import { useState, useEffect, useRef, useCallback } from "react";
 import { T, apiFetch, Card, SectionHeader, Tag, Spinner, ErrorBanner } from "./theme";
 
@@ -13,10 +13,8 @@ function LegendItem({ color, label }) {
 
 export default function TelemetryTab({ sessionKey, drivers, mode }) {
   const allDrivers = drivers || [];
-  const [driverA, setDriverA] = useState(null);
-  const [driverB, setDriverB] = useState(null);
-  const [telemA, setTelemA] = useState(null);
-  const [telemB, setTelemB] = useState(null);
+  const [selectedDrivers, setSelectedDrivers] = useState([]);
+  const [telemetry, setTelemetry] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [playing, setPlaying] = useState(false);
@@ -25,38 +23,59 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
   const playingRef = useRef(false);
   const animRef = useRef(null);
   const canvasRef = useRef(null);
+  const lastProgressUpdate = useRef(0);
 
-  // Auto-select first two drivers
+  const toggleDriver = (dn) => {
+    setSelectedDrivers(prev => {
+      if (prev.includes(dn)) return prev.length > 1 ? prev.filter(d => d !== dn) : prev;
+      if (prev.length >= 2) return prev; // max 2 drivers
+      return [...prev, dn];
+    });
+  };
+
   useEffect(() => {
-    if (allDrivers.length >= 2 && !driverA) {
-      setDriverA(allDrivers[0]?.driver_number);
-      setDriverB(allDrivers[1]?.driver_number);
+    if (allDrivers.length >= 2 && selectedDrivers.length === 0) {
+      setSelectedDrivers([allDrivers[0]?.driver_number, allDrivers[1]?.driver_number].filter(Boolean));
     }
-  }, [allDrivers, driverA]);
+  }, [allDrivers, selectedDrivers.length]);
 
-  // Fetch telemetry
+  // Fetch telemetry for selected drivers (fastest lap only — API default)
   const fetchTelemetry = useCallback(async () => {
-    if (!sessionKey || !driverA || !driverB || mode === "upcoming") return;
+    if (!sessionKey || selectedDrivers.length === 0 || mode === "upcoming") return;
     setLoading(true); setError(null);
     try {
-      const [tA, tB] = await Promise.all([
-        apiFetch(`/telemetry/${sessionKey}/${driverA}`),
-        apiFetch(`/telemetry/${sessionKey}/${driverB}`),
-      ]);
-      setTelemA(tA); setTelemB(tB);
+      const results = await Promise.all(
+        selectedDrivers.map(dn => apiFetch(`/telemetry/${sessionKey}/${dn}`))
+      );
+      const next = {};
+      selectedDrivers.forEach((dn, i) => { next[dn] = results[i]; });
+      setTelemetry(next);
     } catch(e) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [sessionKey, driverA, driverB, mode]);
+  }, [sessionKey, selectedDrivers, mode]);
 
   useEffect(() => { fetchTelemetry(); }, [fetchTelemetry]);
 
-  // Build track points — INVERT Y so it's not mirrored
-  const trackPts = telemA?.x?.length > 0
-    ? telemA.x.map((x, i) => [x, 1 - telemA.y[i]])
+  const primaryTelem = selectedDrivers[0] ? telemetry[selectedDrivers[0]] : null;
+
+  // Build track points from first selected driver (fastest lap)
+  const trackPts = primaryTelem?.x?.length > 0
+    ? primaryTelem.x.map((x, i) => [x, 1 - (primaryTelem.y[i] ?? 0)])
     : null;
+
+  // Zone color from OpenF1 speed (km/h) + brake (0/100) — F1-accurate thresholds
+  const zoneColor = (speed, brake) => {
+    if (brake >= 50) return "#E63946";           // Heavy braking (OpenF1: 100 = pressed)
+    if (brake > 0) return "#F4A261";             // Braking zone
+    if (speed < 100) return "#E63946";           // Very low speed (hairpin/heavy brake)
+    if (speed < 160) return "#E9C46A";           // Low speed corner
+    if (speed < 220) return "#2A9D8F";           // Medium speed
+    if (speed < 290) return "#48CAE4";           // High speed
+    return "#FFFFFF";                            // Max/DRS straight
+  };
 
   const drawTrack = useCallback((progA, progB) => {
     const canvas = canvasRef.current;
@@ -66,45 +85,52 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
     const pad = 40;
     ctx.clearRect(0, 0, W, H);
 
-    // Transform normalized [0-1] to canvas coords with padding + aspect ratio
-    const aspect = (W - pad*2) / (H - pad*2);
-    const toCanvas = ([x,y]) => [x*(W-pad*2)+pad, y*(H-pad*2)+pad];
+    // Fit track in canvas preserving aspect ratio (OpenF1 x,y are proportional)
+    const trackW = Math.max(...trackPts.map(([x]) => x)) - Math.min(...trackPts.map(([x]) => x)) || 1;
+    const trackH = Math.max(...trackPts.map(([,y]) => y)) - Math.min(...trackPts.map(([,y]) => y)) || 1;
+    const canvasW = W - pad * 2, canvasH = H - pad * 2;
+    const scale = Math.min(canvasW / trackW, canvasH / trackH);
+    const ox = Math.min(...trackPts.map(([x]) => x));
+    const oy = Math.min(...trackPts.map(([,y]) => y));
+    const toCanvas = ([x, y]) => [
+      pad + (x - ox) * scale,
+      pad + (y - oy) * scale,
+    ];
 
     // --- Track outline glow ---
     ctx.save();
     ctx.beginPath();
-    trackPts.forEach(([x,y],i) => {
-      const [cx,cy] = toCanvas([x,y]);
-      i===0 ? ctx.moveTo(cx,cy) : ctx.lineTo(cx,cy);
+    trackPts.forEach(([x, y], i) => {
+      const [cx, cy] = toCanvas([x, y]);
+      i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
     });
     ctx.closePath();
     ctx.strokeStyle = "rgba(255,255,255,0.03)";
     ctx.lineWidth = 20;
-    ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.stroke();
     ctx.strokeStyle = "rgba(255,255,255,0.05)";
     ctx.lineWidth = 10;
     ctx.stroke();
     ctx.restore();
 
-    // --- Speed-colored track ---
-    for (let i=0; i<trackPts.length-1; i++) {
-      const [x1,y1] = toCanvas(trackPts[i]);
-      const [x2,y2] = toCanvas(trackPts[i+1]);
-      const spd = telemA?.speed?.[i] || 200;
-      let color;
-      if (spd < 80) color = "#E63946";        // Heavy braking (Crisp Red)
-      else if (spd < 130) color = "#F4A261";   // Braking zone (Warm Orange)
-      else if (spd < 180) color = "#E9C46A";   // Low speed (Soft Yellow)
-      else if (spd < 250) color = "#2A9D8F";   // Medium speed (Modern Teal)
-      else if (spd < 300) color = "#48CAE4";   // High speed (Bright Blue)
-      else color = "#FFFFFF";                  // DRS/straight (Pure White)
+    // --- Speed/brake-colored track (aligned per-point from OpenF1) ---
+    for (let i = 0; i < trackPts.length - 1; i++) {
+      const [x1, y1] = toCanvas(trackPts[i]);
+      const [x2, y2] = toCanvas(trackPts[i + 1]);
+      const spd = primaryTelem?.speed?.[i] ?? 200;
+      const brake = primaryTelem?.brake?.[i] ?? 0;
+      const color = zoneColor(spd, brake);
 
       ctx.beginPath();
-      ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 5; ctx.lineCap = "round";
-      ctx.globalAlpha = 0.7; ctx.stroke();
+      ctx.lineWidth = 5;
+      ctx.lineCap = "round";
+      ctx.globalAlpha = 0.85;
+      ctx.stroke();
       ctx.globalAlpha = 1;
     }
 
@@ -121,28 +147,36 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
       ctx.restore();
     }
 
-    // --- Driver trail helper ---
+    // --- Driver trail (interpolated for smooth animation) ---
     const drawDriverTrail = (progVal, teamColor, acronym, trailLen) => {
       const nPts = trackPts.length;
-      const mainIdx = Math.floor(progVal * (nPts - 1));
+      const exactIdx = Math.max(0, Math.min(1, progVal)) * (nPts - 1);
+      const idx0 = Math.floor(exactIdx);
+      const idx1 = Math.min(idx0 + 1, nPts - 1);
+      const frac = exactIdx - idx0;
 
-      // Trail (last ~15 points)
+      // Trail (last ~15 points behind current position)
       for (let t = trailLen; t >= 0; t--) {
-        const tIdx = mainIdx - t;
+        const tIdx = Math.round(exactIdx - t);
         if (tIdx < 0 || tIdx >= nPts) continue;
         const [tx, ty] = toCanvas(trackPts[tIdx]);
         const alpha = ((trailLen - t) / trailLen) * 0.5;
         const size = 1.5 + ((trailLen - t) / trailLen) * 2;
-        ctx.beginPath(); ctx.arc(tx, ty, size, 0, Math.PI*2);
-        ctx.fillStyle = teamColor; ctx.globalAlpha = alpha;
-        ctx.fill(); ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(tx, ty, size, 0, Math.PI * 2);
+        ctx.fillStyle = teamColor;
+        ctx.globalAlpha = alpha;
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
 
-      // Main dot
-      if (mainIdx >= 0 && mainIdx < nPts) {
-        const [dx, dy] = toCanvas(trackPts[mainIdx]);
+      // Main dot — interpolate between adjacent points for smooth movement
+      const [x0, y0] = toCanvas(trackPts[idx0]);
+      const [x1, y1] = toCanvas(trackPts[idx1]);
+      const dx = x0 + (x1 - x0) * frac;
+      const dy = y0 + (y1 - y0) * frac;
 
-        // Outer glow
+      // Outer glow
         ctx.beginPath(); ctx.arc(dx, dy, 12, 0, Math.PI*2);
         ctx.fillStyle = teamColor; ctx.globalAlpha = 0.15; ctx.fill();
         ctx.globalAlpha = 1;
@@ -165,22 +199,20 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
         ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 4;
         ctx.fillText(acronym, dx, dy - 14);
         ctx.shadowBlur = 0;
-      }
     };
 
-    // --- Draw both drivers ---
-    const dAInfo = allDrivers.find(d => d.driver_number === driverA);
-    const dBInfo = allDrivers.find(d => d.driver_number === driverB);
-    const colorA = `#${dAInfo?.team_colour || "27F4D2"}`;
-    const colorB = `#${dBInfo?.team_colour || "e8002d"}`;
+    // --- Draw all selected drivers (synced at same progress) ---
+    selectedDrivers.forEach((dn, i) => {
+      const info = allDrivers.find(d => d.driver_number === dn);
+      const color = `#${info?.team_colour || "27F4D2"}`;
+      const prog = i === 0 ? progA : progB;
+      drawDriverTrail(prog, color, info?.name_acronym || "", 12);
+    });
 
-    drawDriverTrail(progB, colorB, dBInfo?.name_acronym || "", 12);
-    drawDriverTrail(progA, colorA, dAInfo?.name_acronym || "", 15);
-
-    // --- Legend ---
+    // --- Legend (matches zoneColor — OpenF1 brake + speed) ---
     const legend = [
-      ["#ff1744","HEAVY BRAKE"],["#e8002d","BRAKING"],["#448aff","LOW SPEED"],
-      ["#27F4D2","MID SPEED"],["#b2ff59","HIGH SPEED"],["#ffd700","MAX/DRS"],
+      ["#E63946","HEAVY BRAKE"],["#F4A261","BRAKING"],["#E9C46A","LOW SPEED"],
+      ["#2A9D8F","MID SPEED"],["#48CAE4","HIGH SPEED"],["#FFFFFF","MAX/DRS"],
     ];
     legend.forEach(([c,l],i)=>{
       ctx.globalAlpha = 0.8;
@@ -189,41 +221,59 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
       ctx.fillText(l,24,17+i*15);
       ctx.globalAlpha = 1;
     });
-  }, [trackPts, telemA, driverA, driverB, allDrivers]);
+  }, [trackPts, primaryTelem, selectedDrivers, allDrivers]);
 
-  // Chart.js for speed/throttle/brake
+  // Chart.js for speed/throttle/brake — only re-create when telemetry changes (not on progress)
   const chartRefs = { speed: useRef(null), throttle: useRef(null), brake: useRef(null) };
   const chartInstances = useRef({});
+  const chartDataRef = useRef(null);
 
   useEffect(() => {
-    if (!telemA || !telemB) return;
+    if (!primaryTelem || selectedDrivers.length === 0) return;
+    chartDataRef.current = { primaryTelem, selectedDrivers, telemetry };
     const script = document.createElement("script");
     script.src = "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js";
     script.onload = () => {
-      const labels = telemA.speed.map((_, i) => i);
-      const dAInfo = allDrivers.find(d => d.driver_number === driverA);
-      const dBInfo = allDrivers.find(d => d.driver_number === driverB);
-      const cA = `#${dAInfo?.team_colour || "448aff"}`;
-      const cB = `#${dBInfo?.team_colour || "e8002d"}`;
+      const labels = primaryTelem.speed?.map((_, i) => i) || [];
       const cfgs = {
-        speed: { dA: telemA.speed, dB: telemB.speed, min:50, max:360, u:"km/h" },
-        throttle: { dA: telemA.throttle, dB: telemB.throttle, min:0, max:105, u:"%" },
-        brake: { dA: telemA.brake, dB: telemB.brake, min:0, max:105, u:"%" },
+        speed: { key: "speed", min: 50, max: 360, u: "km/h" },
+        throttle: { key: "throttle", min: 0, max: 105, u: "%" },
+        brake: { key: "brake", min: 0, max: 105, u: "%" },
       };
-      Object.entries(cfgs).forEach(([key,cfg]) => {
-        if (!chartRefs[key].current || !window.Chart) return;
-        chartInstances.current[key]?.destroy?.();
-        chartInstances.current[key] = new window.Chart(chartRefs[key].current.getContext("2d"), {
-          type:"line", data:{ labels, datasets:[
-            {data:cfg.dA, borderColor:cA, borderWidth:1.5, backgroundColor:"transparent", pointRadius:0},
-            {data:cfg.dB, borderColor:`${cB}88`, borderWidth:1, backgroundColor:"transparent", pointRadius:0, borderDash:[3,3]},
-          ]},
-          options:{ responsive:true, maintainAspectRatio:false, animation:false,
-            plugins:{ legend:{display:false}, tooltip:{enabled:false} },
-            scales:{
-              x:{ display:false },
-              y:{ grid:{color:"rgba(255,255,255,0.06)"}, min:cfg.min, max:cfg.max,
-                  ticks:{color:T.dim2, font:{family:"'DM Mono'",size:9}, callback:v=>`${v}${cfg.u}`} },
+      Object.entries(cfgs).forEach(([chartKey, cfg]) => {
+        if (!chartRefs[chartKey].current || !window.Chart) return;
+        chartInstances.current[chartKey]?.destroy?.();
+        const datasets = selectedDrivers.map((dn, i) => {
+          const t = telemetry[dn];
+          const info = allDrivers.find(d => d.driver_number === dn);
+          const c = `#${info?.team_colour || "448aff"}`;
+          const data = t?.[cfg.key] || [];
+          return {
+            data,
+            borderColor: i === 0 ? c : `${c}99`,
+            borderWidth: i === 0 ? 1.5 : 1,
+            borderDash: i > 0 ? [4, 2] : [],
+            backgroundColor: "transparent",
+            pointRadius: 0,
+          };
+        });
+        chartInstances.current[chartKey] = new window.Chart(chartRefs[chartKey].current.getContext("2d"), {
+          type: "line",
+          data: { labels, datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            resizeDelay: 250,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: {
+              x: { display: false },
+              y: {
+                grid: { color: "rgba(255,255,255,0.06)" },
+                min: cfg.min,
+                max: cfg.max,
+                ticks: { color: T.dim2, font: { family: "'DM Mono'", size: 9 }, callback: v => `${v}${cfg.u}` },
+              },
             },
           },
         });
@@ -232,24 +282,27 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
     };
     document.head.appendChild(script);
     return () => {
-      Object.values(chartInstances.current).forEach(c=>c?.destroy?.());
-      try { document.head.removeChild(script); } catch(e) {}
+      Object.values(chartInstances.current).forEach(c => c?.destroy?.());
+      try { document.head.removeChild(script); } catch (e) {}
     };
-  }, [telemA, telemB, drawTrack, allDrivers, driverA, driverB]);
+  }, [primaryTelem, selectedDrivers, telemetry, drawTrack, allDrivers]);
 
-  // Animation loop — smoother with smaller increment
+  // Animation loop — speed based on actual lap time (~90s default)
   useEffect(() => {
     let lastTime = 0;
+    const lapTimeSec = primaryTelem?.lap_time ?? 90;
+    const progressPerSec = 1 / lapTimeSec;
     const loop = (timestamp) => {
-      if (playingRef.current && telemA) {
+      if (playingRef.current && primaryTelem) {
         const dt = lastTime ? (timestamp - lastTime) / 1000 : 0.016;
         lastTime = timestamp;
-        // ~12 seconds for a full lap (0.08 per second)
-        progressRef.current = (progressRef.current + dt * 0.08) % 1;
-        setProgress(progressRef.current);
-        // Driver B slightly behind (simulates ~0.5s gap)
-        const gapB = Math.max(0, progressRef.current - 0.015);
-        drawTrack(progressRef.current, gapB < 0 ? gapB + 1 : gapB);
+        progressRef.current = (progressRef.current + dt * progressPerSec) % 1;
+        if (timestamp - lastProgressUpdate.current > 80) {
+          lastProgressUpdate.current = timestamp;
+          setProgress(progressRef.current);
+        }
+        const gapB = Math.max(0, progressRef.current - 0.012);
+        drawTrack(progressRef.current, gapB);
       } else {
         lastTime = 0;
       }
@@ -257,19 +310,23 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
     };
     animRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animRef.current);
-  }, [drawTrack, telemA]);
+  }, [drawTrack, primaryTelem]);
 
   const togglePlay = () => { playingRef.current = !playingRef.current; setPlaying(p => !p); };
   const reset = () => { playingRef.current = false; setPlaying(false); progressRef.current = 0; setProgress(0); drawTrack(0, 0.03); };
 
-  const idx = telemA ? Math.floor(progress * (telemA.speed.length - 1)) : 0;
-  const idxB = telemB ? Math.floor(progress * (telemB.speed.length - 1)) : 0;
-  const live = {
-    speedA: telemA?.speed?.[idx] || 0, speedB: telemB?.speed?.[idxB] || 0,
-    throttleA: telemA?.throttle?.[idx] || 0, throttleB: telemB?.throttle?.[idxB] || 0,
-    brakeA: telemA?.brake?.[idx] || 0, brakeB: telemB?.brake?.[idxB] || 0,
-    gearA: telemA?.gear?.[idx] || 0, gearB: telemB?.gear?.[idxB] || 0,
-  };
+  const liveValues = selectedDrivers.map(dn => {
+    const t = telemetry[dn];
+    const n = t?.speed?.length ?? 1;
+    const idx = Math.min(Math.floor(progress * Math.max(0, n - 1)), n - 1);
+    return {
+      driver_number: dn,
+      speed: t?.speed?.[idx] || 0,
+      throttle: t?.throttle?.[idx] || 0,
+      brake: t?.brake?.[idx] || 0,
+      gear: t?.gear?.[idx] || 0,
+    };
+  });
 
   if (mode === "upcoming") return (
     <Card><div style={{textAlign:"center",padding:"40px",fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,letterSpacing:"2px"}}>
@@ -279,32 +336,37 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
   if (loading) return <Spinner label="Fetching telemetry from OpenF1..."/>;
   if (error) return <ErrorBanner message={error} onRetry={fetchTelemetry}/>;
 
-  const dAInfo = allDrivers.find(d => d.driver_number === driverA);
-  const dBInfo = allDrivers.find(d => d.driver_number === driverB);
+  const fastestLap = primaryTelem?.lap_time ? primaryTelem.lap_time.toFixed(3) + "s" : "—";
 
   return(
     <div>
-      {/* Driver selectors */}
+      {/* Driver checkboxes — fastest lap per driver */}
       <div style={{display:"flex",alignItems:"center",gap:"16px",marginBottom:"16px",flexWrap:"wrap"}}>
-        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-          <div style={{width:"3px",height:"18px",background:`#${dAInfo?.team_colour||"448aff"}`,borderRadius:"2px"}}/>
-          <select value={driverA||""} onChange={e=>setDriverA(+e.target.value)}
-            style={{fontFamily:T.fontMono,fontSize:"11px",background:T.bg3,color:T.text,border:`1px solid ${T.border2}`,
-              borderRadius:T.radiusSm,padding:"4px 8px",cursor:"pointer"}}>
-            {allDrivers.map(d=><option key={d.driver_number} value={d.driver_number}>{d.name_acronym} — {d.full_name}</option>)}
-          </select>
-        </div>
-        <span style={{color:T.dim,fontSize:"12px"}}>vs</span>
-        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-          <div style={{width:"3px",height:"18px",background:`#${dBInfo?.team_colour||"e8002d"}`,borderRadius:"2px"}}/>
-          <select value={driverB||""} onChange={e=>setDriverB(+e.target.value)}
-            style={{fontFamily:T.fontMono,fontSize:"11px",background:T.bg3,color:T.text,border:`1px solid ${T.border2}`,
-              borderRadius:T.radiusSm,padding:"4px 8px",cursor:"pointer"}}>
-            {allDrivers.map(d=><option key={d.driver_number} value={d.driver_number}>{d.name_acronym} — {d.full_name}</option>)}
-          </select>
+        <span style={{fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",color:T.dim2}}>SELECT 2 DRIVERS · FASTEST LAP</span>
+        <div style={{display:"flex",flexWrap:"wrap",gap:"8px"}}>
+          {allDrivers.map(d => {
+            const checked = selectedDrivers.includes(d.driver_number);
+            const lapTime = telemetry[d.driver_number]?.lap_time;
+            const disabled = !checked && selectedDrivers.length >= 2;
+            return (
+              <label key={d.driver_number} style={{
+                display:"flex",alignItems:"center",gap:"6px",cursor:disabled ? "not-allowed" : "pointer",
+                padding:"4px 10px",borderRadius:T.radiusSm,
+                border:`1px solid ${checked ? `#${d.team_colour||"448aff"}` : disabled ? T.border : T.border2}`,
+                background:checked ? `${d.team_colour ? "#"+d.team_colour+"22" : "rgba(68,138,255,0.1)"}` : disabled ? "rgba(255,255,255,0.02)" : "transparent",
+                opacity: disabled ? 0.5 : 1,
+              }}>
+                <input type="checkbox" checked={checked} disabled={disabled} onChange={()=>toggleDriver(d.driver_number)}
+                  style={{accentColor:`#${d.team_colour||"448aff"}`}}/>
+                <span style={{width:"6px",height:"6px",borderRadius:"50%",background:`#${d.team_colour||"448aff"}`}}/>
+                <span style={{fontFamily:T.fontMono,fontSize:"10px",color:T.text}}>{d.name_acronym}</span>
+                {lapTime && <span style={{fontFamily:T.fontMono,fontSize:"8px",color:T.dim2}}>{lapTime.toFixed(3)}s</span>}
+              </label>
+            );
+          })}
         </div>
         <div style={{flex:1}}/>
-        <Tag label={`FASTEST LAP · ${telemA?.lap_time ? telemA.lap_time.toFixed(3)+"s" : "—"}`} color={T.yellow}/>
+        <Tag label={`FASTEST LAP · ${fastestLap}`} color={T.yellow}/>
       </div>
 
       {/* Track + Live readout */}
@@ -336,36 +398,35 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
         <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
           <SectionHeader title="Live readout"/>
           {[
-            {label:"SPEED",vA:live.speedA,vB:live.speedB,unit:"km/h",color:T.blue,max:360},
-            {label:"THROTTLE",vA:live.throttleA,vB:live.throttleB,unit:"%",color:T.green,max:100},
-            {label:"BRAKE",vA:live.brakeA,vB:live.brakeB,unit:"%",color:T.red,max:100},
-            {label:"GEAR",vA:live.gearA,vB:live.gearB,unit:"",color:T.yellow,max:8},
-          ].map(c=>(
-            <Card key={c.label} style={{padding:"10px 14px"}}>
-              <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"3px",color:T.dim2,marginBottom:"5px"}}>{c.label}</div>
-              <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between"}}>
-                <span style={{fontFamily:T.fontDisplay,fontSize:"22px",fontWeight:700,color:c.color,lineHeight:1}}>
-                  {c.vA}<span style={{fontSize:"10px",color:T.dim2,marginLeft:"2px"}}>{c.unit}</span>
-                </span>
-                <span style={{fontFamily:T.fontDisplay,fontSize:"15px",fontWeight:500,color:`${c.color}66`}}>
-                  {c.vB}<span style={{fontSize:"9px",color:T.dim2,marginLeft:"2px"}}>{c.unit}</span>
-                </span>
-              </div>
-              <div style={{display:"flex",gap:"4px",marginTop:"5px"}}>
-                <div style={{flex:1,height:"3px",background:T.dim,borderRadius:"1px",overflow:"hidden"}}>
-                  <div style={{width:`${Math.min(100,(c.vA/c.max)*100)}%`,height:"100%",background:c.color,
-                    borderRadius:"1px",transition:"width .05s"}}/>
-                </div>
-                <div style={{flex:1,height:"3px",background:T.dim,borderRadius:"1px",overflow:"hidden"}}>
-                  <div style={{width:`${Math.min(100,(c.vB/c.max)*100)}%`,height:"100%",background:`${c.color}66`,
-                    borderRadius:"1px",transition:"width .05s"}}/>
-                </div>
-              </div>
+            {key:"speed",label:"SPEED",unit:"km/h",color:T.blue,max:360},
+            {key:"throttle",label:"THROTTLE",unit:"%",color:T.green,max:100},
+            {key:"brake",label:"BRAKE",unit:"%",color:T.red,max:100},
+            {key:"gear",label:"GEAR",unit:"",color:T.yellow,max:8},
+          ].map(m=>(
+            <Card key={m.label} style={{padding:"10px 14px"}}>
+              <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"3px",color:T.dim2,marginBottom:"8px"}}>{m.label}</div>
+              {liveValues.map(lv => {
+                const info = allDrivers.find(d => d.driver_number === lv.driver_number);
+                const v = lv[m.key];
+                return (
+                  <div key={lv.driver_number} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"4px"}}>
+                    <span style={{fontFamily:T.fontMono,fontSize:"9px",color:`#${info?.team_colour||"448aff"}`,minWidth:"28px"}}>
+                      {info?.name_acronym || lv.driver_number}
+                    </span>
+                    <span style={{fontFamily:T.fontDisplay,fontSize:"16px",fontWeight:700,color:m.color}}>
+                      {v}<span style={{fontSize:"9px",color:T.dim2,marginLeft:"2px"}}>{m.unit}</span>
+                    </span>
+                    <div style={{flex:1,maxWidth:"80px",height:"4px",background:T.dim,borderRadius:"1px",overflow:"hidden",marginLeft:"8px"}}>
+                      <div style={{width:`${Math.min(100,(v/m.max)*100)}%`,height:"100%",background:m.color,borderRadius:"1px",transition:"width .05s"}}/>
+                    </div>
+                  </div>
+                );
+              })}
             </Card>
           ))}
           <div style={{display:"flex",flexDirection:"column",gap:"6px",background:"rgba(0,0,0,0.4)",padding:"10px",borderRadius:"4px",border:`1px solid ${T.border}`}}>
               <LegendItem color="#E63946" label="HEAVY BRAKE"/>
-              <LegendItem color="#F4A261" label="BRAKING"/>
+              <LegendItem color="#F4A261" label="BRAKING ZONE"/>
               <LegendItem color="#E9C46A" label="LOW SPEED"/>
               <LegendItem color="#2A9D8F" label="MID SPEED"/>
               <LegendItem color="#48CAE4" label="HIGH SPEED"/>
@@ -381,14 +442,16 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
         {key:"brake",label:"BRAKE",unit:"%",color:T.red,h:72},
       ].map(tr=>(
         <Card key={tr.key} style={{padding:"12px 16px",marginBottom:"8px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px",flexWrap:"wrap"}}>
             <div style={{width:"3px",height:"14px",background:tr.color,borderRadius:"2px"}}/>
             <span style={{fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"3px",color:T.dim2,textTransform:"uppercase"}}>{tr.label} · {tr.unit}</span>
             <div style={{flex:1}}/>
-            <span style={{fontFamily:T.fontMono,fontSize:"9px",color:`#${dAInfo?.team_colour||"448aff"}`}}>— {dAInfo?.name_acronym||""}</span>
-            <span style={{fontFamily:T.fontMono,fontSize:"9px",color:`#${dBInfo?.team_colour||"e8002d"}88`,marginLeft:"8px"}}>
-              - - {dBInfo?.name_acronym||""}
-            </span>
+            {selectedDrivers.map((dn,i)=>{
+              const info = allDrivers.find(d=>d.driver_number===dn);
+              return <span key={dn} style={{fontFamily:T.fontMono,fontSize:"9px",color:`#${info?.team_colour||"448aff"}`,marginLeft:i>0?"12px":0}}>
+                {i>0?"· ":""}{info?.name_acronym||dn}
+              </span>;
+            })}
           </div>
           <div style={{height:`${tr.h}px`}}><canvas ref={chartRefs[tr.key]}/></div>
         </Card>
