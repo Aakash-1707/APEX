@@ -1,0 +1,403 @@
+import { useState, useEffect, useRef } from "react";
+import { T, apiFetch, Tag, Card, Spinner, ErrorBanner } from "./theme";
+import TelemetryTab from "./TelemetryTab";
+import TyreDegTab from "./TyreDegTab";
+import { QualiPredictionTab, RacePredictionTab } from "./PredictionTabs";
+
+// ─── HEADER ───────────────────────────────────────────────────────────────────
+function Header({mode, raceName}) {
+  const [time,setTime]=useState(new Date());
+  useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t);},[]);
+  return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+      padding:"12px 28px",borderBottom:`1px solid ${T.border}`,
+      background:`linear-gradient(180deg,${T.bg1},transparent)`,
+      position:"sticky",top:0,zIndex:100,backdropFilter:"blur(8px)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:"14px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"8px",padding:"4px 10px 4px 6px",
+          border:"1px solid rgba(0,229,255,0.35)",borderRadius:T.radiusSm,
+          background:"rgba(0,229,255,0.05)",boxShadow:"0 0 12px rgba(0,229,255,0.12)"}}>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M9 1L17 9L9 17L1 9Z" stroke="#00e5ff" strokeWidth="1.5"
+              fill="rgba(0,229,255,0.1)" style={{filter:"drop-shadow(0 0 4px rgba(0,229,255,0.6))"}}/>
+            <path d="M9 5L13 9L9 13L5 9Z" fill="#00e5ff" opacity="0.7"/>
+          </svg>
+          <span style={{fontFamily:T.fontDisplay,fontSize:"13px",fontWeight:900,
+            letterSpacing:"3px",color:"#00e5ff",textShadow:"0 0 8px rgba(0,229,255,0.7)"}}>
+            APEX
+          </span>
+        </div>
+        <div>
+          <div style={{fontFamily:T.fontDisplay,fontSize:"12px",fontWeight:700,letterSpacing:"2px",color:T.text}}>
+            F1 STRATEGY <span style={{color:T.red}}>INTELLIGENCE</span>
+          </div>
+          <div style={{fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",color:T.dim2,marginTop:"1px"}}>
+            {raceName ? `2026 · ${raceName.toUpperCase()}` : "2026 SEASON"}
+          </div>
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:"10px",fontFamily:T.fontMono,fontSize:"10px",letterSpacing:"2px",color:T.dim2}}>
+        {mode && <Tag label={mode==="past"?"HISTORICAL":mode==="live"?"LIVE":"PREDICTION"}
+          color={mode==="past"?"#27F4D2":mode==="live"?T.red:T.yellow}/>}
+        <span>{time.toUTCString().slice(17,25)} UTC</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── RACE SELECTOR ────────────────────────────────────────────────────────────
+function RaceSelector({calendar, selectedKey, onSelect}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const selected = calendar.find(r=>r.meeting_key===selectedKey) || calendar[0];
+
+  useEffect(()=>{
+    const h = e => { if(ref.current&&!ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return ()=>document.removeEventListener("mousedown", h);
+  },[]);
+
+  if (!selected) return null;
+  const past = calendar.filter(r=>r.mode==="past");
+  const live = calendar.filter(r=>r.mode==="live");
+  const upcoming = calendar.filter(r=>r.mode==="upcoming");
+
+  const modeColor = m => m==="past"?T.green:m==="live"?T.red:T.yellow;
+  const modeLabel = m => m==="past"?"HISTORICAL":m==="live"?"LIVE":"UPCOMING";
+
+  return(
+    <div ref={ref} style={{position:"relative",marginBottom:"16px"}}>
+      <button onClick={()=>setOpen(o=>!o)} style={{
+        display:"flex",alignItems:"center",gap:"12px",padding:"10px 16px",
+        background:T.bg2,border:`1px solid ${open?T.red:T.border2}`,
+        borderRadius:T.radius,cursor:"pointer",width:"100%",
+        transition:"border-color .15s",outline:"none",textAlign:"left",
+        boxShadow:open?`0 0 0 1px ${T.redDim}`:"none"}}>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+            <span style={{fontFamily:T.fontDisplay,fontSize:"14px",fontWeight:700,
+              color:T.text,letterSpacing:"1px"}}>
+              {selected.name?.toUpperCase()}
+            </span>
+            <span style={{fontFamily:T.fontMono,fontSize:"9px",padding:"2px 7px",
+              borderRadius:"3px",letterSpacing:"1.5px",
+              background:`${modeColor(selected.mode)}11`,
+              border:`1px solid ${modeColor(selected.mode)}44`,
+              color:modeColor(selected.mode)}}>
+              {modeLabel(selected.mode)}
+            </span>
+          </div>
+          <div style={{fontFamily:T.fontMono,fontSize:"9px",color:T.dim2,marginTop:"3px",letterSpacing:"1px"}}>
+            {selected.circuit_short_name} · {selected.location} · {new Date(selected.date_start).toLocaleDateString("en-GB",
+              {day:"numeric",month:"short",year:"numeric"})}
+          </div>
+        </div>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+          style={{transform:open?"rotate(180deg)":"none",transition:"transform .2s",flexShrink:0}}>
+          <path d="M2 4L6 8L10 4" stroke={T.dim2} strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      </button>
+
+      {open&&(
+        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,zIndex:200,
+          background:T.bg1,border:`1px solid ${T.border2}`,borderRadius:T.radius,
+          overflow:"hidden",boxShadow:"0 16px 40px rgba(0,0,0,0.6)",maxHeight:"480px",overflowY:"auto"}}>
+          {[
+            {items:past,label:`■ HISTORICAL — ${past.length} COMPLETE`,color:T.green},
+            {items:live,label:`● LIVE`,color:T.red},
+            {items:upcoming,label:`◇ UPCOMING — ${upcoming.length} REMAINING`,color:T.yellow},
+          ].filter(g=>g.items.length>0).map(group=>(
+            <div key={group.label}>
+              <div style={{padding:"8px 12px 4px",fontFamily:T.fontMono,fontSize:"8px",
+                letterSpacing:"3px",color:group.color,borderBottom:`1px solid ${T.border}`}}>
+                {group.label}
+              </div>
+              {group.items.map(r=>(
+                <button key={r.meeting_key} onClick={()=>{onSelect(r.meeting_key);setOpen(false);}} style={{
+                  display:"flex",alignItems:"center",gap:"10px",width:"100%",padding:"8px 14px",
+                  background:r.meeting_key===selectedKey?`${group.color}0a`:"transparent",
+                  border:"none",borderBottom:`1px solid ${T.border}`,cursor:"pointer",textAlign:"left",
+                  borderLeft:r.meeting_key===selectedKey?`3px solid ${group.color}`:"3px solid transparent"}}>
+                  <span style={{fontFamily:T.fontBody,fontSize:"12px",fontWeight:600,
+                    color:r.meeting_key===selectedKey?T.text:"#aaa",flex:1}}>
+                    {r.name}
+                  </span>
+                  <span style={{fontFamily:T.fontMono,fontSize:"9px",color:T.dim2}}>
+                    {r.circuit_short_name}
+                  </span>
+                  <span style={{fontFamily:T.fontMono,fontSize:"9px",color:T.dim2}}>
+                    {new Date(r.date_start).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
+                  </span>
+                  {r.meeting_key===selectedKey&&<span style={{color:group.color}}>✓</span>}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SESSION BAR ──────────────────────────────────────────────────────────────
+function SessionBar({sessions, session, setSession}) {
+  if (!sessions?.length) return null;
+  return(
+    <div style={{display:"flex",gap:"4px",marginBottom:"16px",overflowX:"auto"}}>
+      {sessions.map(s=>(
+        <button key={s.session_key} onClick={()=>setSession(s)} style={{
+          padding:"5px 14px",fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",
+          border:`1px solid ${session?.session_key===s.session_key?T.red:T.border2}`,
+          borderRadius:T.radiusSm,color:session?.session_key===s.session_key?T.text:T.dim2,
+          cursor:"pointer",textTransform:"uppercase",transition:"all .15s",whiteSpace:"nowrap",
+          background:session?.session_key===s.session_key?"rgba(232,0,45,0.08)":"transparent"}}>
+          {s.session_name}
+          {s.status==="completed"?" ✓":s.status==="live"?" ●":""}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── TAB BAR ──────────────────────────────────────────────────────────────────
+function TabBar({tab, setTab, sessions}) {
+  const hasSprint = sessions?.some(s => s.session_name.toLowerCase().includes("sprint"));
+  const tabs = ["Telemetry", "Tyre Deg"];
+  
+  if (hasSprint) {
+    tabs.push("Sprint Quali Pred", "Sprint Race Pred");
+  }
+  tabs.push("Quali Prediction", "Race Prediction");
+
+  return(
+    <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,marginBottom:"20px",overflowX:"auto"}}>
+      {tabs.map(t=>(
+        <button key={t} onClick={()=>setTab(t)} style={{
+          padding:"10px 20px",fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",
+          textTransform:"uppercase",background:"transparent",border:"none",
+          borderBottom:`2px solid ${tab===t?T.red:"transparent"}`,
+          color:tab===t?T.text:T.dim2,cursor:"pointer",transition:"all .15s",
+          marginBottom:"-1px",whiteSpace:"nowrap"}}>
+          {t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+export default function APEX() {
+  const [calendar, setCalendar] = useState([]);
+  const [selectedKey, setSelectedKey] = useState(null);
+  const [sessions, setSessions] = useState([]);
+  const [activeSession, setActiveSession] = useState(null);
+  const [drivers, setDrivers] = useState([]);
+  const [tab, setTab] = useState("Race Prediction");
+  const [predictions, setPredictions] = useState(null);
+  const [modelMeta, setModelMeta] = useState(null);
+  const [predLoading, setPredLoading] = useState(false);
+  const [predError, setPredError] = useState(null);
+  const [qualiNotReady, setQualiNotReady] = useState(false);
+  const [apiOnline, setApiOnline] = useState(null);
+
+  // Check API health
+  useEffect(() => {
+    apiFetch("/health").then(() => setApiOnline(true)).catch(() => setApiOnline(false));
+  }, []);
+
+  // Load calendar
+  useEffect(() => {
+    apiFetch("/calendar").then(cal => {
+      setCalendar(cal);
+      // Auto-select: first past race (most recent) or first upcoming
+      const past = cal.filter(r => r.mode === "past");
+      const live = cal.filter(r => r.mode === "live");
+      if (live.length > 0) setSelectedKey(live[0].meeting_key);
+      else if (past.length > 0) setSelectedKey(past[past.length - 1].meeting_key);
+      else if (cal.length > 0) setSelectedKey(cal[0].meeting_key);
+    }).catch(() => {});
+  }, []);
+
+  // Load sessions when meeting changes
+  useEffect(() => {
+    if (!selectedKey) return;
+    setSessions([]); setActiveSession(null); setDrivers([]);
+    setPredictions(null); setModelMeta(null); setPredError(null); setQualiNotReady(false);
+
+    apiFetch(`/sessions/${selectedKey}`).then(sess => {
+      setSessions(sess);
+      // Auto-select Race session, fall back to last session
+      const race = sess.find(s => s.session_name === "Race");
+      setActiveSession(race || sess[sess.length - 1] || null);
+    }).catch(() => {});
+  }, [selectedKey]);
+
+  // Load drivers when session changes
+  useEffect(() => {
+    if (!activeSession) return;
+    apiFetch(`/drivers/${activeSession.session_key}`)
+      .then(setDrivers)
+      .catch(() => {});
+  }, [activeSession]);
+
+  // Run prediction when session changes — always predicts using best available data
+  useEffect(() => {
+    if (!selectedKey || sessions.length === 0) return;
+
+    // Determine which type of race/quali we are predicting based on the active tab
+    const isSprintRace = tab === "Sprint Race Pred";
+    const isSprintQuali = tab === "Sprint Quali Pred";
+    const isSprintView = isSprintRace || isSprintQuali || activeSession?.session_name === "Sprint";
+    
+    // Find relevant qualifying session to use as base data
+    const qualiSession = sessions.find(s =>
+      isSprintView 
+        ? s.session_name.includes("Sprint Shootout") || s.session_name.includes("Sprint Qualifying") 
+        : s.session_name === "Qualifying"
+    );
+
+    // Find the relevant race session to predict for
+    let targetRaceSession = activeSession;
+    if (isSprintRace) {
+        targetRaceSession = sessions.find(s => s.session_name.includes("Sprint") && !s.session_name.includes("Shootout") && !s.session_name.includes("Qualifying"));
+    } else if (tab === "Race Prediction") {
+        targetRaceSession = sessions.find(s => s.session_name === "Race");
+    }
+
+    const selected = calendar.find(r => r.meeting_key === selectedKey);
+    const circuit = selected?.circuit_short_name || "Australia";
+
+    setPredLoading(true); setPredError(null); setPredictions(null); setQualiNotReady(false);
+
+    const abortController = new AbortController();
+
+    apiFetch("/predict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: abortController.signal,
+      body: JSON.stringify({
+        session_key: qualiSession?.status === "completed" ? qualiSession.session_key : null,
+        race_session_key: targetRaceSession?.session_key || null,
+        meeting_key: selectedKey,
+        circuit: circuit,
+        n_sims: 100000, 
+      }),
+    })
+    .then(data => {
+      setPredictions(data.predictions);
+      setModelMeta({...data.model_meta, prediction_basis: data.prediction_basis});
+      setPredLoading(false);
+    })
+    .catch(e => {
+      if (e.name !== "AbortError") {
+        setPredError(e.message);
+        setPredLoading(false);
+      }
+    });
+
+    return () => abortController.abort();
+  }, [activeSession, selectedKey, sessions, calendar, tab]);
+
+  const selected = calendar.find(r => r.meeting_key === selectedKey);
+  const mode = selected?.mode || "upcoming";
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg0,color:T.text,fontFamily:T.fontBody,overflowX:"hidden"}}>
+      <div style={{position:"fixed",inset:0,
+        background:"repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.04) 3px,rgba(0,0,0,0.04) 4px)",
+        pointerEvents:"none",zIndex:9999}}/>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Orbitron:wght@700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+
+      <Header mode={mode} raceName={selected?.name}/>
+
+      {apiOnline === false && (
+        <div style={{background:"rgba(232,0,45,0.06)",borderBottom:`1px solid ${T.redBorder}`,
+          padding:"10px 28px",display:"flex",alignItems:"center",gap:"12px"}}>
+          <span style={{color:T.red,fontSize:"14px"}}>⚠</span>
+          <span style={{fontFamily:T.fontMono,fontSize:"9px",color:T.dim2,letterSpacing:"1.5px"}}>
+            APEX BACKEND OFFLINE · Run: <span style={{color:T.text}}>uvicorn api:app --reload --port 8000</span>
+          </span>
+        </div>
+      )}
+
+      <div style={{maxWidth:"1440px",margin:"0 auto",padding:"20px 24px"}}>
+        {calendar.length > 0 && (
+          <RaceSelector calendar={calendar} selectedKey={selectedKey} onSelect={setSelectedKey}/>
+        )}
+
+        {mode==="upcoming" && (
+          <div style={{marginBottom:"16px",padding:"10px 16px",
+            background:"rgba(255,215,0,0.04)",border:"1px solid rgba(255,215,0,0.2)",
+            borderRadius:T.radius,display:"flex",alignItems:"center",gap:"12px"}}>
+            <div style={{width:"6px",height:"6px",borderRadius:"50%",background:T.yellow,
+              boxShadow:`0 0 6px ${T.yellow}`,flexShrink:0}}/>
+            <span style={{fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",color:T.yellow}}>
+              PREDICTION MODE — {selected?.name?.toUpperCase()} HAS NOT YET OCCURRED
+            </span>
+          </div>
+        )}
+
+        {mode==="live" && (
+          <div style={{marginBottom:"16px",padding:"10px 16px",
+            background:"rgba(232,0,45,0.04)",border:"1px solid rgba(232,0,45,0.2)",
+            borderRadius:T.radius,display:"flex",alignItems:"center",gap:"12px"}}>
+            <div style={{width:"6px",height:"6px",borderRadius:"50%",background:T.red,
+              boxShadow:`0 0 6px ${T.red}`,flexShrink:0,animation:"pulse 1.5s infinite"}}/>
+            <span style={{fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",color:T.red}}>
+              LIVE WEEKEND — {selected?.name?.toUpperCase()}
+            </span>
+            <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
+          </div>
+        )}
+
+        {predError && <ErrorBanner message={predError} onRetry={()=>setSelectedKey(selectedKey)} style={{marginBottom:"16px"}}/>}
+
+        <SessionBar sessions={sessions} session={activeSession} setSession={setActiveSession}/>
+        <TabBar tab={tab} setTab={setTab} sessions={sessions}/>
+
+        {tab==="Telemetry" && (
+          <TelemetryTab sessionKey={activeSession?.session_key} drivers={drivers}
+            mode={activeSession?.status || mode}/>
+        )}
+        {tab==="Tyre Deg" && (
+          <TyreDegTab sessionKey={activeSession?.session_key} drivers={drivers}
+            mode={activeSession?.status || mode}/>
+        )}
+        {tab==="Sprint Quali Pred" && (
+          <QualiPredictionTab
+            sessionKey={sessions.find(s=>s.session_name.includes("Sprint Shootout") || s.session_name.includes("Sprint Qualifying"))?.session_key}
+            drivers={drivers} mode={mode}
+            predictions={predLoading?null:predictions}
+            modelMeta={modelMeta}
+            qualiNotReady={false}/>
+        )}
+        {tab==="Sprint Race Pred" && (
+          predLoading
+            ? <Spinner label={`Running ${(100000).toLocaleString()} Monte Carlo simulations...`}/>
+            : <RacePredictionTab
+                raceSessionKey={sessions.find(s=>s.session_name.includes("Sprint") && !s.session_name.includes("Shootout") && !s.session_name.includes("Qualifying"))?.session_key}
+                drivers={drivers} mode={mode}
+                predictions={predictions} modelMeta={modelMeta}
+                qualiNotReady={qualiNotReady}/>
+        )}
+        {tab==="Quali Prediction" && (
+          <QualiPredictionTab
+            sessionKey={sessions.find(s=>s.session_name==="Qualifying")?.session_key}
+            drivers={drivers} mode={mode}
+            predictions={predLoading?null:predictions}
+            modelMeta={modelMeta}
+            qualiNotReady={false}/>
+        )}
+        {tab==="Race Prediction" && (
+          predLoading
+            ? <Spinner label={`Running ${(100000).toLocaleString()} Monte Carlo simulations...`}/>
+            : <RacePredictionTab
+                raceSessionKey={sessions.find(s=>s.session_name==="Race")?.session_key}
+                drivers={drivers} mode={mode}
+                predictions={predictions} modelMeta={modelMeta}
+                qualiNotReady={qualiNotReady}/>
+        )}
+      </div>
+    </div>
+  );
+}

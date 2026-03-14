@@ -1,0 +1,31 @@
+import sys
+with open("/Users/aakashbaskar/Downloads/APEX_project/apex_backend/model_core.py", "r") as f:
+    text = f.read()
+
+text = text.replace("performance += np.random.normal(0, 0.012, len(drivers))", """
+    performance += np.random.normal(0, 0.012, len(drivers))
+    print("Final internal performance:", list(performance))
+""")
+
+with open("/Users/aakashbaskar/Downloads/APEX_project/apex_backend/model_core_debug.py", "w") as f:
+    f.write(text)
+
+import sys, json, math
+sys.path.append("/Users/aakashbaskar/Downloads/APEX_project/apex_backend")
+from model_core_debug import simulate_race_v4
+import numpy as np
+
+teams = [
+    "Mercedes", "Mercedes", "Ferrari", "Ferrari", "McLaren", "McLaren",
+    "Red Bull Racing", "Red Bull Racing", "Aston Martin", "Aston Martin",
+    "Alpine", "Alpine", "Williams", "Williams", "Racing Bulls", "Racing Bulls",
+    "Haas F1 Team", "Haas F1 Team", "Kick Sauber", "Kick Sauber", "Cadillac", "Audi"
+]
+base = [
+    0.35, 0.35, 0.10, 0.10, 0.05, 0.05, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+]
+preds = [{"driver": f"Driver {i}", "team": teams[i], "win_prob": base[i], "grid_pos": i+1} for i in range(len(teams))]
+
+np.random.seed(189)
+simulate_race_v4(preds)
