@@ -4,6 +4,10 @@ venv/
 env/
 .env
 
+# Caches
+apex_backend/prediction_cache/
+apex_backend/f1_cache/
+
 # Python
 __pycache__/
 *.py[cod]

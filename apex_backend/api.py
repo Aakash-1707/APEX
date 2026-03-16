@@ -215,7 +215,26 @@ def health():
 @app.get("/api/calendar")
 def get_calendar(year: int = Query(2026)):
     """Fetch race calendar from OpenF1, excluding testing events."""
-    meetings = _openf1("meetings", {"year": year})
+    meetings = []
+    try:
+        meetings = _openf1("meetings", {"year": year})
+    except httpx.HTTPStatusError as e:
+        print(f"OpenF1 calendar error for year={year}: {e.response.status_code} - {e.response.text[:200]}")
+        if year == 2026:
+            # Fallback when OpenF1 returns 502/5xx for 2026
+            return [
+                {"meeting_key": 1280, "name": "Chinese Grand Prix", "circuit_short_name": "Shanghai", "date_start": "2026-03-13T00:00:00", "date_end": "2026-03-15T23:59:59", "mode": "live"},
+                {"meeting_key": 1281, "name": "Australian Grand Prix", "circuit_short_name": "Melbourne", "date_start": "2026-03-27T00:00:00", "date_end": "2026-03-29T23:59:59", "mode": "upcoming"}
+            ]
+        meetings = []
+    except Exception as e:
+        print(f"OpenF1 calendar error: {e}")
+        if year == 2026:
+            return [
+                {"meeting_key": 1280, "name": "Chinese Grand Prix", "circuit_short_name": "Shanghai", "date_start": "2026-03-13T00:00:00", "date_end": "2026-03-15T23:59:59", "mode": "live"},
+                {"meeting_key": 1281, "name": "Australian Grand Prix", "circuit_short_name": "Melbourne", "date_start": "2026-03-27T00:00:00", "date_end": "2026-03-29T23:59:59", "mode": "upcoming"}
+            ]
+        meetings = []
 
     if not isinstance(meetings, list):
         print(f"Warning: Expected list from OpenF1, got {type(meetings)}")
@@ -223,7 +242,7 @@ def get_calendar(year: int = Query(2026)):
 
     now = datetime.now(timezone.utc)
     output = []
-    
+
     # Fallback if meetings is empty (due to API restrictions)
     if not meetings and year == 2026:
         return [
@@ -237,8 +256,13 @@ def get_calendar(year: int = Query(2026)):
         if "Testing" in name or "Test" in name:
             continue
 
-        date_end = datetime.fromisoformat(m["date_end"])
-        date_start = datetime.fromisoformat(m["date_start"])
+        date_end = datetime.fromisoformat(m["date_end"].replace("Z", "+00:00"))
+        date_start = datetime.fromisoformat(m["date_start"].replace("Z", "+00:00"))
+
+        if date_end.tzinfo is None:
+            date_end = date_end.replace(tzinfo=timezone.utc)
+        if date_start.tzinfo is None:
+            date_start = date_start.replace(tzinfo=timezone.utc)
 
         if date_end < now:
             mode = "past"
@@ -295,8 +319,15 @@ def get_sessions(meeting_key: int):
     now = datetime.now(timezone.utc)
     output = []
     for s in sessions:
-        date_end = datetime.fromisoformat(s["date_end"])
-        date_start = datetime.fromisoformat(s["date_start"])
+        ds = s["date_start"].replace("Z", "+00:00")
+        de = s["date_end"].replace("Z", "+00:00")
+        date_start = datetime.fromisoformat(ds)
+        date_end = datetime.fromisoformat(de)
+
+        if date_start.tzinfo is None:
+            date_start = date_start.replace(tzinfo=timezone.utc)
+        if date_end.tzinfo is None:
+            date_end = date_end.replace(tzinfo=timezone.utc)
 
         if date_end < now:
             status = "completed"
