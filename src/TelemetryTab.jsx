@@ -67,15 +67,16 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
     ? primaryTelem.x.map((x, i) => [x, 1 - (primaryTelem.y[i] ?? 0)])
     : null;
 
-  // Zone color from OpenF1 speed (km/h) + brake (0/100) — F1-accurate thresholds
+  // Zone color — F1-style gradient: red (slow/brake) → orange → yellow → grey → white (fast)
   const zoneColor = (speed, brake) => {
-    if (brake >= 50) return "#E63946";           // Heavy braking (OpenF1: 100 = pressed)
-    if (brake > 0) return "#F4A261";             // Braking zone
-    if (speed < 100) return "#E63946";           // Very low speed (hairpin/heavy brake)
-    if (speed < 160) return "#E9C46A";           // Low speed corner
-    if (speed < 220) return "#2A9D8F";           // Medium speed
-    if (speed < 290) return "#48CAE4";           // High speed
-    return "#FFFFFF";                            // Max/DRS straight
+    if (brake >= 50) return "#E8002D";           // Heavy braking — F1 red
+    if (brake > 0) return "#E84420";             // Trail braking — dark orange-red
+    if (speed < 100) return "#E8002D";           // Hairpin / very slow
+    if (speed < 150) return "#F05028";           // Low speed corner — orange-red
+    if (speed < 200) return "#F08030";           // Medium-low corner — orange
+    if (speed < 250) return "#D0A040";           // Medium speed — muted gold
+    if (speed < 300) return "#8A8A8A";           // High speed — grey
+    return "#D0D0D0";                            // Full throttle / DRS — light grey
   };
 
   const drawTrack = useCallback((progA, progB) => {
@@ -93,9 +94,13 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
     const scale = Math.min(canvasW / trackW, canvasH / trackH);
     const ox = Math.min(...trackPts.map(([x]) => x));
     const oy = Math.min(...trackPts.map(([,y]) => y));
+    const scaledW = trackW * scale;
+    const scaledH = trackH * scale;
+    const offsetX = pad + (canvasW - scaledW) / 2;
+    const offsetY = pad + (canvasH - scaledH) / 2;
     const toCanvas = ([x, y]) => [
-      pad + (x - ox) * scale,
-      pad + (y - oy) * scale,
+      offsetX + (x - ox) * scale,
+      offsetY + (y - oy) * scale,
     ];
 
     // --- Track outline glow ---
@@ -128,9 +133,9 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
       ctx.strokeStyle = color;
-      ctx.lineWidth = 5;
+      ctx.lineWidth = 6;
       ctx.lineCap = "round";
-      ctx.globalAlpha = 0.85;
+      ctx.globalAlpha = 0.9;
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
@@ -210,10 +215,9 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
       drawDriverTrail(prog, color, info?.name_acronym || "", 12);
     });
 
-    // --- Legend (matches zoneColor — OpenF1 brake + speed) ---
     const legend = [
-      ["#E63946","HEAVY BRAKE"],["#F4A261","BRAKING"],["#E9C46A","LOW SPEED"],
-      ["#2A9D8F","MID SPEED"],["#48CAE4","HIGH SPEED"],["#FFFFFF","MAX/DRS"],
+      ["#E8002D","HEAVY BRAKE"],["#E84420","BRAKING"],["#F05028","LOW SPEED"],
+      ["#F08030","MID-LOW"],["#D0A040","MID SPEED"],["#8A8A8A","HIGH SPEED"],["#D0D0D0","FULL THROTTLE"],
     ];
     legend.forEach(([c,l],i)=>{
       ctx.globalAlpha = 0.8;
@@ -429,12 +433,13 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
           <div style={{display:"flex",flexDirection:mobile?"row":"column",flexWrap:mobile?"wrap":"nowrap",
             gap:"6px",background:"rgba(0,0,0,0.4)",padding:"10px",borderRadius:"4px",border:`1px solid ${T.border}`,
             gridColumn:mobile?"1 / -1":undefined}}>
-              <LegendItem color="#E63946" label="HEAVY BRAKE"/>
-              <LegendItem color="#F4A261" label="BRAKING ZONE"/>
-              <LegendItem color="#E9C46A" label="LOW SPEED"/>
-              <LegendItem color="#2A9D8F" label="MID SPEED"/>
-              <LegendItem color="#48CAE4" label="HIGH SPEED"/>
-              <LegendItem color="#FFFFFF" label="MAX/DRS"/>
+              <LegendItem color="#E8002D" label="HEAVY BRAKE"/>
+              <LegendItem color="#E84420" label="BRAKING"/>
+              <LegendItem color="#F05028" label="LOW SPEED"/>
+              <LegendItem color="#F08030" label="MID-LOW"/>
+              <LegendItem color="#D0A040" label="MID SPEED"/>
+              <LegendItem color="#8A8A8A" label="HIGH SPEED"/>
+              <LegendItem color="#D0D0D0" label="FULL THROTTLE"/>
             </div>
         </div>
       </div>
