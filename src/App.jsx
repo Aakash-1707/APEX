@@ -301,7 +301,7 @@ export default function APEX() {
         race_session_key: targetRaceSession?.session_key || null,
         meeting_key: selectedKey,
         circuit: circuit,
-        n_sims: 100000,
+        n_sims: import.meta.env.VITE_API_URL ? 20000 : 100000,
         source_mode: sourceMode,
       }),
     })
@@ -406,7 +406,7 @@ export default function APEX() {
         )}
         {tab==="Sprint Quali Pred" && (
           predLoading
-            ? <Spinner label={`Running ${(100000).toLocaleString()} Monte Carlo simulations...`}/>
+            ? <Spinner label={`Running ${(import.meta.env.VITE_API_URL ? 20000 : 100000).toLocaleString()} Monte Carlo simulations...`}/>
             : <QualiPredictionTab
                 sessionKey={sessions.find(s=>s.session_name.includes("Sprint Shootout") || s.session_name.includes("Sprint Qualifying"))?.session_key}
                 drivers={drivers} mode={mode}
@@ -417,7 +417,7 @@ export default function APEX() {
         )}
         {tab==="Sprint Race Pred" && (
           predLoading
-            ? <Spinner label={`Running ${(100000).toLocaleString()} Monte Carlo simulations...`}/>
+            ? <Spinner label={`Running ${(import.meta.env.VITE_API_URL ? 20000 : 100000).toLocaleString()} Monte Carlo simulations...`}/>
             : <RacePredictionTab
                 raceSessionKey={sessions.find(s=>s.session_name.includes("Sprint") && !s.session_name.includes("Shootout") && !s.session_name.includes("Qualifying"))?.session_key}
                 drivers={drivers} mode={mode}
@@ -427,7 +427,7 @@ export default function APEX() {
         )}
         {tab==="Quali Prediction" && (
           predLoading
-            ? <Spinner label={`Running ${(100000).toLocaleString()} Monte Carlo simulations...`}/>
+            ? <Spinner label={`Running ${(import.meta.env.VITE_API_URL ? 20000 : 100000).toLocaleString()} Monte Carlo simulations...`}/>
             : <QualiPredictionTab
                 sessionKey={sessions.find(s=>s.session_name==="Qualifying")?.session_key}
                 drivers={drivers} mode={mode}
@@ -438,7 +438,7 @@ export default function APEX() {
         )}
         {tab==="Race Prediction" && (
           predLoading
-            ? <Spinner label={`Running ${(100000).toLocaleString()} Monte Carlo simulations...`}/>
+            ? <Spinner label={`Running ${(import.meta.env.VITE_API_URL ? 20000 : 100000).toLocaleString()} Monte Carlo simulations...`}/>
             : <RacePredictionTab
                 raceSessionKey={sessions.find(s=>s.session_name==="Race")?.session_key}
                 drivers={drivers} mode={mode}

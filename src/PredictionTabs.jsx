@@ -35,12 +35,11 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
     apiFetch(`/result/${sessionKey}`).then(setResult).catch(() => {});
   }, [sessionKey, mode]);
 
-  if (!predictions?.length && mode !== "past") return (
+  if (!predictions?.length) return (
     <Card><div style={{textAlign:"center",padding:"40px",fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,letterSpacing:"2px"}}>
-      QUALIFYING PREDICTIONS AVAILABLE AFTER MODEL RUN
+      CLICK PREDICT TO RUN QUALIFYING MODEL
     </div></Card>
   );
-  if (!predictions?.length) return <Spinner label="Loading predictions..."/>;
 
   const sorted = [...predictions].sort((a,b) => a.grid_pos - b.grid_pos);
 
@@ -229,7 +228,11 @@ export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, 
       .finally(() => setLoading(false));
   }, [raceSessionKey]);
 
-  if (!predictions?.length) return <Spinner label="Loading predictions..."/>;
+  if (!predictions?.length) return (
+    <Card><div style={{textAlign:"center",padding:"40px",fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,letterSpacing:"2px"}}>
+      CLICK PREDICT TO RUN RACE MODEL
+    </div></Card>
+  );
 
   const sorted = [...predictions].sort((a,b) => b.win_pct - a.win_pct);
   // Show actual vs predicted as soon as a session result exists (works for Sprint + main race)

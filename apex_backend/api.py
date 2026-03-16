@@ -86,7 +86,7 @@ def _openf1(endpoint: str, params: dict = None, ttl: int = _DEFAULT_TTL) -> list
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=60.0) as client:
                 resp = client.get(url, params=params)
                 if resp.status_code == 429:
                     wait = 2 ** attempt
@@ -220,25 +220,40 @@ def health():
 @app.get("/api/calendar")
 def get_calendar(year: int = Query(2026)):
     """Fetch race calendar from OpenF1, excluding testing events."""
+    def _compute_fallback_2026():
+        """Return hardcoded 2026 calendar with dynamically computed modes."""
+        now_utc = datetime.now(timezone.utc)
+        races = [
+            {"meeting_key": 1280, "name": "Chinese Grand Prix", "circuit_short_name": "Shanghai",
+             "location": "Shanghai", "date_start": "2026-03-13T00:00:00+00:00", "date_end": "2026-03-16T00:00:00+00:00"},
+            {"meeting_key": 1281, "name": "Australian Grand Prix", "circuit_short_name": "Melbourne",
+             "location": "Melbourne", "date_start": "2026-03-27T00:00:00+00:00", "date_end": "2026-03-30T00:00:00+00:00"},
+        ]
+        result = []
+        for r in races:
+            ds = datetime.fromisoformat(r["date_start"])
+            de = datetime.fromisoformat(r["date_end"])
+            if de < now_utc:
+                m = "past"
+            elif ds <= now_utc <= de:
+                m = "live"
+            else:
+                m = "upcoming"
+            result.append({**r, "mode": m})
+        return result
+
     meetings = []
     try:
         meetings = _openf1("meetings", {"year": year})
     except httpx.HTTPStatusError as e:
         print(f"OpenF1 calendar error for year={year}: {e.response.status_code} - {e.response.text[:200]}")
         if year == 2026:
-            # Fallback when OpenF1 returns 502/5xx for 2026
-            return [
-                {"meeting_key": 1280, "name": "Chinese Grand Prix", "circuit_short_name": "Shanghai", "date_start": "2026-03-13T00:00:00", "date_end": "2026-03-15T23:59:59", "mode": "live"},
-                {"meeting_key": 1281, "name": "Australian Grand Prix", "circuit_short_name": "Melbourne", "date_start": "2026-03-27T00:00:00", "date_end": "2026-03-29T23:59:59", "mode": "upcoming"}
-            ]
+            return _compute_fallback_2026()
         meetings = []
     except Exception as e:
         print(f"OpenF1 calendar error: {e}")
         if year == 2026:
-            return [
-                {"meeting_key": 1280, "name": "Chinese Grand Prix", "circuit_short_name": "Shanghai", "date_start": "2026-03-13T00:00:00", "date_end": "2026-03-15T23:59:59", "mode": "live"},
-                {"meeting_key": 1281, "name": "Australian Grand Prix", "circuit_short_name": "Melbourne", "date_start": "2026-03-27T00:00:00", "date_end": "2026-03-29T23:59:59", "mode": "upcoming"}
-            ]
+            return _compute_fallback_2026()
         meetings = []
 
     if not isinstance(meetings, list):
@@ -248,12 +263,8 @@ def get_calendar(year: int = Query(2026)):
     now = datetime.now(timezone.utc)
     output = []
 
-    # Fallback if meetings is empty (due to API restrictions)
     if not meetings and year == 2026:
-        return [
-            {"meeting_key": 1280, "name": "Chinese Grand Prix", "circuit_short_name": "Shanghai", "date_start": "2026-03-13T00:00:00", "date_end": "2026-03-15T23:59:59", "mode": "live"},
-            {"meeting_key": 1281, "name": "Australian Grand Prix", "circuit_short_name": "Melbourne", "date_start": "2026-03-27T00:00:00", "date_end": "2026-03-29T23:59:59", "mode": "upcoming"}
-        ]
+        return _compute_fallback_2026()
 
     for m in meetings:
         # Skip pre-season testing
