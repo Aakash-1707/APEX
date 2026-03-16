@@ -1,8 +1,9 @@
 // APEX Tyre Degradation Tab
 import { useState, useEffect, useRef, useCallback } from "react";
-import { T, apiFetch, Card, SectionHeader, Spinner, ErrorBanner } from "./theme";
+import { T, apiFetch, Card, SectionHeader, Spinner, ErrorBanner, useIsMobile } from "./theme";
 
 export default function TyreDegTab({ sessionKey, drivers, mode }) {
+  const mobile = useIsMobile();
   const [stints, setStints] = useState(null);
   const [lapData, setLapData] = useState({});
   const [loading, setLoading] = useState(false);
@@ -124,7 +125,7 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
 
   return(
     <div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"16px",marginBottom:"16px"}}>
+      <div style={{display:"grid",gridTemplateColumns:mobile?"1fr":"1fr 1fr",gap:"16px",marginBottom:"16px"}}>
         <Card>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px",flexWrap:"wrap",gap:"8px"}}>
             <SectionHeader title="Lap time degradation"/>
@@ -143,7 +144,8 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
                       } catch(e) {}
                     }
                   }} style={{
-                    padding:"3px 8px",fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"1px",
+                    padding:mobile?"6px 10px":"3px 8px",fontFamily:T.fontMono,
+                    fontSize:mobile?"10px":"8px",letterSpacing:"1px",
                     border:`1px solid ${active?`#${d?.team_colour||"e8002d"}`:T.border2}`,
                     borderRadius:T.radiusSm,
                     color:active?`#${d?.team_colour||"e8002d"}`:T.dim,
@@ -155,11 +157,11 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
               })}
             </div>
           </div>
-          <div style={{height:"280px",position:"relative"}}>
+          <div style={{height:mobile?"220px":"280px",position:"relative"}}>
             <canvas ref={chartRef}/>
             {!hasAnyLapTimes && (
               <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
-                background:"rgba(0,0,0,0.3)",fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,letterSpacing:"2px",textAlign:"center",padding:24}}>
+                background:"rgba(0,0,0,0.3)",fontFamily:T.fontMono,fontSize:mobile?"11px":"10px",color:T.dim2,letterSpacing:"2px",textAlign:"center",padding:24}}>
                 LAP TIMES NOT YET AVAILABLE<br/>
                 <span style={{fontSize:"9px",marginTop:"6px",opacity:0.8}}>OpenF1 may still be processing this session</span>
               </div>
@@ -174,9 +176,9 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
             const driverStints = stints[dn] || [];
             return(
               <div key={dn} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"8px"}}>
-                <span style={{fontFamily:T.fontMono,fontSize:"10px",
+                <span style={{fontFamily:T.fontMono,fontSize:mobile?"11px":"10px",
                   color:T.dim2,width:"40px",flexShrink:0}}>{d?.name_acronym||dn}</span>
-                <div style={{flex:1,display:"flex",gap:"2px",height:"20px"}}>
+                <div style={{flex:1,display:"flex",gap:"2px",height:mobile?"24px":"20px"}}>
                   {driverStints.map((s,i) => {
                     const compound = (s.compound||"UNKNOWN").toUpperCase();
                     const color = T.tyres[compound] || T.dim;
@@ -184,7 +186,7 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
                       <div key={i} style={{
                         flex:s.laps||1, background:color, borderRadius:"3px",
                         display:"flex",alignItems:"center",justifyContent:"center",
-                        fontSize:"8px",fontWeight:700,letterSpacing:"0.5px",
+                        fontSize:mobile?"9px":"8px",fontWeight:700,letterSpacing:"0.5px",
                         color:compound==="MEDIUM"||compound==="HARD"?"#000":"#fff",
                         opacity:0.88,fontFamily:T.fontMono}}>
                         {compound[0]}{s.laps}
@@ -192,7 +194,7 @@ export default function TyreDegTab({ sessionKey, drivers, mode }) {
                     );
                   })}
                 </div>
-                <span style={{fontFamily:T.fontMono,fontSize:"8px",color:T.dim2,width:"20px"}}>
+                <span style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",color:T.dim2,width:"20px"}}>
                   {Math.max(0,driverStints.length-1)}P
                 </span>
               </div>

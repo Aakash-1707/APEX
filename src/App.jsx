@@ -1,19 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { T, apiFetch, Tag, Card, Spinner, ErrorBanner } from "./theme";
+import { T, apiFetch, Tag, Card, Spinner, ErrorBanner, useIsMobile } from "./theme";
 import TelemetryTab from "./TelemetryTab";
 import TyreDegTab from "./TyreDegTab";
 import { QualiPredictionTab, RacePredictionTab } from "./PredictionTabs";
 
 // ─── HEADER ───────────────────────────────────────────────────────────────────
-function Header({mode, raceName}) {
+function Header({mode, raceName, mobile}) {
   const [time,setTime]=useState(new Date());
   useEffect(()=>{const t=setInterval(()=>setTime(new Date()),1000);return()=>clearInterval(t);},[]);
   return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-      padding:"12px 28px",borderBottom:`1px solid ${T.border}`,
+      padding:mobile?"8px 12px":"12px 28px",borderBottom:`1px solid ${T.border}`,
       background:`linear-gradient(180deg,${T.bg1},transparent)`,
-      position:"sticky",top:0,zIndex:100,backdropFilter:"blur(8px)"}}>
-      <div style={{display:"flex",alignItems:"center",gap:"14px"}}>
+      position:"sticky",top:0,zIndex:100,backdropFilter:"blur(8px)",
+      flexWrap:mobile?"wrap":"nowrap",gap:mobile?"8px":undefined}}>
+      <div style={{display:"flex",alignItems:"center",gap:mobile?"8px":"14px"}}>
         <div style={{display:"flex",alignItems:"center",gap:"8px",padding:"4px 10px 4px 6px",
           border:"1px solid rgba(0,229,255,0.35)",borderRadius:T.radiusSm,
           background:"rgba(0,229,255,0.05)",boxShadow:"0 0 12px rgba(0,229,255,0.12)"}}>
@@ -22,19 +23,19 @@ function Header({mode, raceName}) {
               fill="rgba(0,229,255,0.1)" style={{filter:"drop-shadow(0 0 4px rgba(0,229,255,0.6))"}}/>
             <path d="M9 5L13 9L9 13L5 9Z" fill="#00e5ff" opacity="0.7"/>
           </svg>
-          <span style={{fontFamily:T.fontDisplay,fontSize:"13px",fontWeight:900,
+          <span style={{fontFamily:T.fontDisplay,fontSize:mobile?"11px":"13px",fontWeight:900,
             letterSpacing:"3px",color:"#00e5ff",textShadow:"0 0 8px rgba(0,229,255,0.7)"}}>
             APEX
           </span>
         </div>
-        <div>
+        {!mobile && <div>
           <div style={{fontFamily:T.fontDisplay,fontSize:"12px",fontWeight:700,letterSpacing:"2px",color:T.text}}>
             F1 STRATEGY <span style={{color:T.red}}>INTELLIGENCE</span>
           </div>
           <div style={{fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",color:T.dim2,marginTop:"1px"}}>
             {raceName ? `2026 · ${raceName.toUpperCase()}` : "2026 SEASON"}
           </div>
-        </div>
+        </div>}
       </div>
       <div style={{display:"flex",alignItems:"center",gap:"10px",fontFamily:T.fontMono,fontSize:"10px",letterSpacing:"2px",color:T.dim2}}>
         {mode && <Tag label={mode==="past"?"HISTORICAL":mode==="live"?"LIVE":"PREDICTION"}
@@ -140,17 +141,21 @@ function RaceSelector({calendar, selectedKey, onSelect}) {
 }
 
 // ─── SESSION BAR ──────────────────────────────────────────────────────────────
-function SessionBar({sessions, session, setSession}) {
+function SessionBar({sessions, session, setSession, mobile}) {
   if (!sessions?.length) return null;
   return(
-    <div style={{display:"flex",gap:"4px",marginBottom:"16px"}}>
+    <div style={{display:"flex",gap:"4px",marginBottom:"16px",
+      overflowX:mobile?"auto":"visible",WebkitOverflowScrolling:"touch",
+      paddingBottom:mobile?"4px":undefined}}>
       {sessions.map(s=>(
         <button key={s.session_key} onClick={()=>setSession(s)} style={{
-          padding:"5px 14px",fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",
+          padding:mobile?"8px 12px":"5px 14px",fontFamily:T.fontMono,
+          fontSize:mobile?"10px":"9px",letterSpacing:mobile?"1px":"2px",
           border:`1px solid ${session?.session_key===s.session_key?T.red:T.border2}`,
           borderRadius:T.radiusSm,color:session?.session_key===s.session_key?T.text:T.dim2,
           cursor:"pointer",textTransform:"uppercase",transition:"all .15s",whiteSpace:"nowrap",
-          background:session?.session_key===s.session_key?"rgba(232,0,45,0.08)":"transparent"}}>
+          background:session?.session_key===s.session_key?"rgba(232,0,45,0.08)":"transparent",
+          flexShrink:0}}>
           {s.session_name}
           {s.status==="completed"?" ✓":s.status==="live"?" ●":""}
         </button>
@@ -160,7 +165,7 @@ function SessionBar({sessions, session, setSession}) {
 }
 
 // ─── TAB BAR ──────────────────────────────────────────────────────────────────
-function TabBar({tab, setTab, sessions}) {
+function TabBar({tab, setTab, sessions, mobile}) {
   const hasSprint = sessions?.some(s => s.session_name.toLowerCase().includes("sprint"));
   const tabs = ["Telemetry", "Tyre Deg"];
   
@@ -170,14 +175,17 @@ function TabBar({tab, setTab, sessions}) {
   tabs.push("Quali Prediction", "Race Prediction");
 
   return(
-    <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,marginBottom:"20px"}}>
+    <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,marginBottom:"20px",
+      overflowX:mobile?"auto":"visible",WebkitOverflowScrolling:"touch",
+      paddingBottom:mobile?"2px":undefined}}>
       {tabs.map(t=>(
         <button key={t} onClick={()=>setTab(t)} style={{
-          padding:"10px 20px",fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",
+          padding:mobile?"10px 12px":"10px 20px",fontFamily:T.fontMono,
+          fontSize:mobile?"10px":"9px",letterSpacing:mobile?"1px":"2px",
           textTransform:"uppercase",background:"transparent",border:"none",
           borderBottom:`2px solid ${tab===t?T.red:"transparent"}`,
           color:tab===t?T.text:T.dim2,cursor:"pointer",transition:"all .15s",
-          marginBottom:"-1px",whiteSpace:"nowrap"}}>
+          marginBottom:"-1px",whiteSpace:"nowrap",flexShrink:0}}>
           {t}
         </button>
       ))}
@@ -187,6 +195,7 @@ function TabBar({tab, setTab, sessions}) {
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function APEX() {
+  const mobile = useIsMobile();
   const [calendar, setCalendar] = useState([]);
   const [selectedKey, setSelectedKey] = useState(null);
   const [sessions, setSessions] = useState([]);
@@ -322,7 +331,7 @@ export default function APEX() {
         pointerEvents:"none",zIndex:9999}}/>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Orbitron:wght@700;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 
-      <Header mode={mode} raceName={selected?.name}/>
+      <Header mode={mode} raceName={selected?.name} mobile={mobile}/>
 
       {apiOnline === false && (
         <div style={{background:"rgba(232,0,45,0.06)",borderBottom:`1px solid ${T.redBorder}`,
@@ -334,7 +343,7 @@ export default function APEX() {
         </div>
       )}
 
-      <div style={{maxWidth:"1440px",margin:"0 auto",padding:"20px 24px"}}>
+      <div style={{maxWidth:"1440px",margin:"0 auto",padding:mobile?"12px 8px":"20px 24px"}}>
         {calendar.length > 0 && (
           <RaceSelector calendar={calendar} selectedKey={selectedKey} onSelect={setSelectedKey}/>
         )}
@@ -366,14 +375,14 @@ export default function APEX() {
 
         {predError && <ErrorBanner message={predError} onRetry={()=>setSelectedKey(selectedKey)} style={{marginBottom:"16px"}}/>}
 
-        <SessionBar sessions={sessions} session={activeSession} setSession={setActiveSession}/>
+        <SessionBar sessions={sessions} session={activeSession} setSession={setActiveSession} mobile={mobile}/>
         <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"8px",flexWrap:"wrap"}}>
           <button
             onClick={runPrediction}
             disabled={!selectedKey || sessions.length === 0 || predLoading}
             style={{
-              fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",
-              padding:"5px 14px",
+              fontFamily:T.fontMono,fontSize:mobile?"11px":"9px",letterSpacing:"2px",
+              padding:mobile?"10px 20px":"5px 14px",
               borderRadius:T.radiusSm,
               border:`1px solid ${predLoading ? T.border2 : T.red}`,
               background:predLoading ? "transparent" : "rgba(232,0,45,0.12)",
@@ -385,7 +394,7 @@ export default function APEX() {
             {predLoading ? "RUNNING..." : "PREDICT"}
           </button>
         </div>
-        <TabBar tab={tab} setTab={setTab} sessions={sessions}/>
+        <TabBar tab={tab} setTab={setTab} sessions={sessions} mobile={mobile}/>
 
         {tab==="Telemetry" && (
           <TelemetryTab sessionKey={activeSession?.session_key} drivers={drivers}

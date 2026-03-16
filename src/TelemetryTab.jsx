@@ -1,6 +1,6 @@
 // APEX Telemetry Tab — Track map + driver comparison (fastest lap only)
 import { useState, useEffect, useRef, useCallback } from "react";
-import { T, apiFetch, Card, SectionHeader, Tag, Spinner, ErrorBanner } from "./theme";
+import { T, apiFetch, Card, SectionHeader, Tag, Spinner, ErrorBanner, useIsMobile } from "./theme";
 
 function LegendItem({ color, label }) {
   return (
@@ -12,6 +12,7 @@ function LegendItem({ color, label }) {
 }
 
 export default function TelemetryTab({ sessionKey, drivers, mode }) {
+  const mobile = useIsMobile();
   const allDrivers = drivers || [];
   const [selectedDrivers, setSelectedDrivers] = useState([]);
   const [telemetry, setTelemetry] = useState({});
@@ -341,9 +342,9 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
   return(
     <div>
       {/* Driver checkboxes — fastest lap per driver */}
-      <div style={{display:"flex",alignItems:"center",gap:"16px",marginBottom:"16px",flexWrap:"wrap"}}>
-        <span style={{fontFamily:T.fontMono,fontSize:"9px",letterSpacing:"2px",color:T.dim2}}>SELECT 2 DRIVERS · FASTEST LAP</span>
-        <div style={{display:"flex",flexWrap:"wrap",gap:"8px"}}>
+      <div style={{display:"flex",alignItems:mobile?"flex-start":"center",gap:mobile?"8px":"16px",marginBottom:"16px",flexWrap:"wrap"}}>
+        <span style={{fontFamily:T.fontMono,fontSize:mobile?"10px":"9px",letterSpacing:"2px",color:T.dim2}}>SELECT 2 DRIVERS</span>
+        <div style={{display:"flex",flexWrap:"wrap",gap:mobile?"6px":"8px"}}>
           {allDrivers.map(d => {
             const checked = selectedDrivers.includes(d.driver_number);
             const lapTime = telemetry[d.driver_number]?.lap_time;
@@ -351,37 +352,37 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
             return (
               <label key={d.driver_number} style={{
                 display:"flex",alignItems:"center",gap:"6px",cursor:disabled ? "not-allowed" : "pointer",
-                padding:"4px 10px",borderRadius:T.radiusSm,
+                padding:mobile?"6px 10px":"4px 10px",borderRadius:T.radiusSm,
                 border:`1px solid ${checked ? `#${d.team_colour||"448aff"}` : disabled ? T.border : T.border2}`,
                 background:checked ? `${d.team_colour ? "#"+d.team_colour+"22" : "rgba(68,138,255,0.1)"}` : disabled ? "rgba(255,255,255,0.02)" : "transparent",
                 opacity: disabled ? 0.5 : 1,
               }}>
                 <input type="checkbox" checked={checked} disabled={disabled} onChange={()=>toggleDriver(d.driver_number)}
-                  style={{accentColor:`#${d.team_colour||"448aff"}`}}/>
+                  style={{accentColor:`#${d.team_colour||"448aff"}`,width:mobile?"16px":"auto",height:mobile?"16px":"auto"}}/>
                 <span style={{width:"6px",height:"6px",borderRadius:"50%",background:`#${d.team_colour||"448aff"}`}}/>
-                <span style={{fontFamily:T.fontMono,fontSize:"10px",color:T.text}}>{d.name_acronym}</span>
-                {lapTime && <span style={{fontFamily:T.fontMono,fontSize:"8px",color:T.dim2}}>{lapTime.toFixed(3)}s</span>}
+                <span style={{fontFamily:T.fontMono,fontSize:mobile?"11px":"10px",color:T.text}}>{d.name_acronym}</span>
+                {!mobile && lapTime && <span style={{fontFamily:T.fontMono,fontSize:"8px",color:T.dim2}}>{lapTime.toFixed(3)}s</span>}
               </label>
             );
           })}
         </div>
-        <div style={{flex:1}}/>
+        {!mobile && <div style={{flex:1}}/>}
         <Tag label={`FASTEST LAP · ${fastestLap}`} color={T.yellow}/>
       </div>
 
       {/* Track + Live readout */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:"16px",marginBottom:"16px"}}>
+      <div style={{display:"grid",gridTemplateColumns:mobile?"1fr":"1fr 300px",gap:"16px",marginBottom:"16px"}}>
         <Card style={{padding:"12px"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"8px"}}>
-            <SectionHeader title="Track map · OpenF1 GPS data"/>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"8px",flexWrap:mobile?"wrap":"nowrap",gap:mobile?"6px":undefined}}>
+            <SectionHeader title="Track map · OpenF1 GPS"/>
             <div style={{display:"flex",gap:"6px"}}>
-              <button onClick={togglePlay} style={{padding:"5px 16px",fontFamily:T.fontMono,fontSize:"9px",
+              <button onClick={togglePlay} style={{padding:mobile?"8px 16px":"5px 16px",fontFamily:T.fontMono,fontSize:mobile?"11px":"9px",
                 letterSpacing:"2px",background:playing?"rgba(232,0,45,0.1)":"rgba(0,230,118,0.08)",
                 border:`1px solid ${playing?T.red:T.green}`,borderRadius:T.radiusSm,
                 color:playing?T.red:T.green,cursor:"pointer",textTransform:"uppercase"}}>
                 {playing?"⏸ PAUSE":"▶ PLAY"}
               </button>
-              <button onClick={reset} style={{padding:"5px 12px",fontFamily:T.fontMono,fontSize:"9px",
+              <button onClick={reset} style={{padding:mobile?"8px 12px":"5px 12px",fontFamily:T.fontMono,fontSize:mobile?"11px":"9px",
                 background:"transparent",border:`1px solid ${T.border2}`,borderRadius:T.radiusSm,
                 color:T.dim2,cursor:"pointer",letterSpacing:"2px"}}>↺ RESET</button>
             </div>
@@ -391,11 +392,12 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
               boxShadow:`0 0 8px ${T.red}`,transition:"width .03s linear"}}/>
           </div>
           <canvas ref={canvasRef} width={600} height={420}
-            style={{width:"100%",height:"420px",background:T.bg1,borderRadius:"6px",
+            style={{width:"100%",height:mobile?"280px":"420px",background:T.bg1,borderRadius:"6px",
               border:`1px solid ${T.border}`}}/>
         </Card>
 
-        <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+        <div style={{display:mobile?"grid":"flex",gridTemplateColumns:mobile?"1fr 1fr":undefined,
+          flexDirection:mobile?undefined:"column",gap:"8px"}}>
           <SectionHeader title="Live readout"/>
           {[
             {key:"speed",label:"SPEED",unit:"km/h",color:T.blue,max:360},
@@ -403,28 +405,30 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
             {key:"brake",label:"BRAKE",unit:"%",color:T.red,max:100},
             {key:"gear",label:"GEAR",unit:"",color:T.yellow,max:8},
           ].map(m=>(
-            <Card key={m.label} style={{padding:"10px 14px"}}>
-              <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"3px",color:T.dim2,marginBottom:"8px"}}>{m.label}</div>
+            <Card key={m.label} style={{padding:mobile?"8px 10px":"10px 14px"}}>
+              <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"3px",color:T.dim2,marginBottom:"6px"}}>{m.label}</div>
               {liveValues.map(lv => {
                 const info = allDrivers.find(d => d.driver_number === lv.driver_number);
                 const v = lv[m.key];
                 return (
                   <div key={lv.driver_number} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"4px"}}>
-                    <span style={{fontFamily:T.fontMono,fontSize:"9px",color:`#${info?.team_colour||"448aff"}`,minWidth:"28px"}}>
+                    <span style={{fontFamily:T.fontMono,fontSize:mobile?"10px":"9px",color:`#${info?.team_colour||"448aff"}`,minWidth:"28px"}}>
                       {info?.name_acronym || lv.driver_number}
                     </span>
-                    <span style={{fontFamily:T.fontDisplay,fontSize:"16px",fontWeight:700,color:m.color}}>
+                    <span style={{fontFamily:T.fontDisplay,fontSize:mobile?"14px":"16px",fontWeight:700,color:m.color}}>
                       {v}<span style={{fontSize:"9px",color:T.dim2,marginLeft:"2px"}}>{m.unit}</span>
                     </span>
-                    <div style={{flex:1,maxWidth:"80px",height:"4px",background:T.dim,borderRadius:"1px",overflow:"hidden",marginLeft:"8px"}}>
+                    {!mobile && <div style={{flex:1,maxWidth:"80px",height:"4px",background:T.dim,borderRadius:"1px",overflow:"hidden",marginLeft:"8px"}}>
                       <div style={{width:`${Math.min(100,(v/m.max)*100)}%`,height:"100%",background:m.color,borderRadius:"1px",transition:"width .05s"}}/>
-                    </div>
+                    </div>}
                   </div>
                 );
               })}
             </Card>
           ))}
-          <div style={{display:"flex",flexDirection:"column",gap:"6px",background:"rgba(0,0,0,0.4)",padding:"10px",borderRadius:"4px",border:`1px solid ${T.border}`}}>
+          <div style={{display:"flex",flexDirection:mobile?"row":"column",flexWrap:mobile?"wrap":"nowrap",
+            gap:"6px",background:"rgba(0,0,0,0.4)",padding:"10px",borderRadius:"4px",border:`1px solid ${T.border}`,
+            gridColumn:mobile?"1 / -1":undefined}}>
               <LegendItem color="#E63946" label="HEAVY BRAKE"/>
               <LegendItem color="#F4A261" label="BRAKING ZONE"/>
               <LegendItem color="#E9C46A" label="LOW SPEED"/>

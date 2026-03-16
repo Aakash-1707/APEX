@@ -1,5 +1,5 @@
 // APEX F1 Theme & Shared Components
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 export const T = {
   bg0:"#07070a", bg1:"#0c0c12", bg2:"#10101a", bg3:"#1a1a2c", bg4:"#252540",
@@ -87,4 +87,18 @@ export function ErrorBanner({message,onRetry}) {
       )}
     </div>
   );
+}
+
+export function useIsMobile(breakpoint = 640) {
+  const [mobile, setMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < breakpoint : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e) => setMobile(e.matches);
+    mq.addEventListener("change", handler);
+    setMobile(mq.matches);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return mobile;
 }

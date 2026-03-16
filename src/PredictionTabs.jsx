@@ -1,6 +1,6 @@
 // APEX Prediction Tabs — Qualifying + Race — with Actual vs Predicted
 import { useState, useEffect } from "react";
-import { T, apiFetch, Card, SectionHeader, Tag, Spinner, ErrorBanner } from "./theme";
+import { T, apiFetch, Card, SectionHeader, Tag, Spinner, ErrorBanner, useIsMobile } from "./theme";
 
 // Helper to find delta between predicted and actual position
 function DeltaBadge({predicted, actual}) {
@@ -27,6 +27,7 @@ function humanReadableSource(sourceMode, predictionBasis) {
 
 // ─── QUALIFYING PREDICTION TAB ───────────────────────────────────────────────
 export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, modelMeta, sourceMode }) {
+  const mobile = useIsMobile();
   const [result, setResult] = useState(null);
 
   useEffect(() => {
@@ -70,12 +71,13 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
           </span>
         </div>
       )}
-      <Card>
-        <div style={{display:"flex",flexDirection:"column",gap:"16px",marginTop:"12px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 4px"}}>
-            <SectionHeader title="Grid prediction · model accuracy"/>
+      <Card style={{padding:mobile?"10px":"16px"}}>
+        <div style={{display:"flex",flexDirection:"column",gap:mobile?"10px":"16px",marginTop:mobile?"6px":"12px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:mobile?"flex-start":"center",
+            padding:"0 4px",flexDirection:mobile?"column":"row",gap:mobile?"6px":undefined}}>
+            <SectionHeader title="Grid prediction"/>
             {modelMeta && (
-              <div style={{fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,textTransform:"uppercase"}}>
+              <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"10px",color:T.dim2,textTransform:"uppercase"}}>
                 DATA SOURCE:{" "}
                 <span style={{color:T.accent}}>
                   {humanReadableSource(sourceMode, modelMeta.prediction_basis)}
@@ -89,6 +91,8 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
           </div>
         </div>
 
+        <div style={{overflowX:mobile?"auto":"visible",WebkitOverflowScrolling:"touch"}}>
+        <div style={{minWidth:mobile?"520px":undefined}}>
         {/* Table header */}
         <div style={{display:"flex",alignItems:"center",gap:"10px",padding:"6px 12px",
           borderBottom:`2px solid ${T.border2}`,marginBottom:"4px"}}>
@@ -164,6 +168,9 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
           </div>
         ))}
 
+        </div>{/* end minWidth wrapper */}
+        </div>{/* end scrollable wrapper */}
+
         {/* Accuracy summary for historical */}
         {hasActual && (() => {
           let totalDelta = 0, count = 0, exact = 0;
@@ -177,20 +184,20 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
           });
           const avgDelta = count > 0 ? (totalDelta / count).toFixed(2) : "—";
           return (
-            <div style={{display:"flex",gap:"16px",padding:"12px",marginTop:"12px",
+            <div style={{display:"flex",gap:mobile?"12px":"16px",padding:"12px",marginTop:"12px",
               background:`rgba(0,229,255,0.03)`,border:`1px solid rgba(0,229,255,0.15)`,
-              borderRadius:T.radius}}>
+              borderRadius:T.radius,flexWrap:"wrap"}}>
               <div>
-                <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"2px",color:T.dim2}}>AVG DELTA</div>
-                <div style={{fontFamily:T.fontDisplay,fontSize:"18px",fontWeight:700,color:"#00e5ff"}}>{avgDelta}</div>
+                <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"2px",color:T.dim2}}>AVG DELTA</div>
+                <div style={{fontFamily:T.fontDisplay,fontSize:mobile?"16px":"18px",fontWeight:700,color:"#00e5ff"}}>{avgDelta}</div>
               </div>
               <div>
-                <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"2px",color:T.dim2}}>EXACT MATCH</div>
-                <div style={{fontFamily:T.fontDisplay,fontSize:"18px",fontWeight:700,color:T.green}}>{exact}/{count}</div>
+                <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"2px",color:T.dim2}}>EXACT MATCH</div>
+                <div style={{fontFamily:T.fontDisplay,fontSize:mobile?"16px":"18px",fontWeight:700,color:T.green}}>{exact}/{count}</div>
               </div>
               <div>
-                <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"2px",color:T.dim2}}>TOP 3 ACC</div>
-                <div style={{fontFamily:T.fontDisplay,fontSize:"18px",fontWeight:700,color:T.yellow}}>
+                <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"2px",color:T.dim2}}>TOP 3 ACC</div>
+                <div style={{fontFamily:T.fontDisplay,fontSize:mobile?"16px":"18px",fontWeight:700,color:T.yellow}}>
                   {(() => {
                     const top3Pred = sorted.slice(0,3).map(p => p.driver_number);
                     const top3Actual = result.filter(r => r.position <= 3).map(r => r.driver_number);
@@ -209,6 +216,7 @@ export function QualiPredictionTab({ sessionKey, drivers, mode, predictions, mod
 
 // ─── RACE PREDICTION TAB ─────────────────────────────────────────────────────
 export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, modelMeta, sourceMode }) {
+  const mobile = useIsMobile();
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -237,16 +245,16 @@ export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, 
     <div>
       {/* Model Info */}
       {modelMeta && (
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"16px"}}>
+        <div style={{display:"grid",gridTemplateColumns:mobile?"repeat(2,1fr)":"repeat(4,1fr)",gap:"8px",marginBottom:"16px"}}>
           {[
             {l:"SIMULATIONS",v:(modelMeta.n_sims||100000).toLocaleString(),c:T.red},
             {l:"SC PROBABILITY",v:`${((modelMeta.sc_probability||0)*100).toFixed(0)}%`,c:T.yellow},
             {l:"RAIN PROBABILITY",v:`${((modelMeta.rain_probability||0)*100).toFixed(0)}%`,c:T.blue},
             {l:"OVERTAKE FACTOR",v:`${modelMeta.overtake_factor||1.4}x`,c:T.green},
           ].map(m=>(
-            <Card key={m.l} style={{padding:"10px 12px"}}>
-              <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"2px",color:T.dim2,marginBottom:"4px"}}>{m.l}</div>
-              <div style={{fontFamily:T.fontDisplay,fontSize:"18px",fontWeight:700,color:m.c}}>{m.v}</div>
+            <Card key={m.l} style={{padding:mobile?"8px 10px":"10px 12px"}}>
+              <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"2px",color:T.dim2,marginBottom:"4px"}}>{m.l}</div>
+              <div style={{fontFamily:T.fontDisplay,fontSize:mobile?"16px":"18px",fontWeight:700,color:m.c}}>{m.v}</div>
             </Card>
           ))}
         </div>
@@ -264,11 +272,12 @@ export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, 
         </div>
       )}
 
-      <Card>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
-          <SectionHeader title="Race prediction · Monte Carlo results" style={{marginBottom:0}}/>
+      <Card style={{padding:mobile?"10px":"16px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:mobile?"flex-start":"center",
+          marginBottom:"16px",flexDirection:mobile?"column":"row",gap:mobile?"6px":undefined}}>
+          <SectionHeader title="Race prediction · Monte Carlo" style={{marginBottom:0}}/>
           {modelMeta && (
-            <div style={{fontFamily:T.fontMono,fontSize:"10px",color:T.dim2,textTransform:"uppercase"}}>
+            <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"10px",color:T.dim2,textTransform:"uppercase"}}>
               DATA SOURCE:{" "}
               <span style={{color:T.accent}}>
                 {humanReadableSource(sourceMode, modelMeta.prediction_basis)}
@@ -276,6 +285,8 @@ export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, 
             </div>
           )}
         </div>
+        <div style={{overflowX:mobile?"auto":"visible",WebkitOverflowScrolling:"touch"}}>
+        <div style={{minWidth:mobile?"600px":undefined}}>
         {/* Table header */}
         <div style={{display:"flex",alignItems:"center",gap:"10px",padding:"6px 12px",
           borderBottom:`2px solid ${T.border2}`,marginBottom:"4px"}}>
@@ -345,6 +356,9 @@ export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, 
           );
         })}
 
+        </div>{/* end minWidth wrapper */}
+        </div>{/* end scrollable wrapper */}
+
         {/* Accuracy summary */}
         {hasActual && (() => {
           let totalDelta = 0, count = 0, exact = 0;
@@ -361,27 +375,27 @@ export function RacePredictionTab({ raceSessionKey, drivers, mode, predictions, 
           const predictedWinner = sorted[0];
           const correctWinner = winner?.driver_number === predictedWinner?.driver_number;
           return (
-            <div style={{display:"flex",gap:"16px",padding:"12px",marginTop:"12px",
+            <div style={{display:"flex",gap:mobile?"12px":"16px",padding:"12px",marginTop:"12px",
               background:`rgba(0,229,255,0.03)`,border:`1px solid rgba(0,229,255,0.15)`,
               borderRadius:T.radius,flexWrap:"wrap"}}>
               <div>
-                <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"2px",color:T.dim2}}>AVG POS DELTA</div>
-                <div style={{fontFamily:T.fontDisplay,fontSize:"18px",fontWeight:700,color:"#00e5ff"}}>{avgDelta}</div>
+                <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"2px",color:T.dim2}}>AVG POS DELTA</div>
+                <div style={{fontFamily:T.fontDisplay,fontSize:mobile?"16px":"18px",fontWeight:700,color:"#00e5ff"}}>{avgDelta}</div>
               </div>
               <div>
-                <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"2px",color:T.dim2}}>EXACT MATCH</div>
-                <div style={{fontFamily:T.fontDisplay,fontSize:"18px",fontWeight:700,color:T.green}}>{exact}/{count}</div>
+                <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"2px",color:T.dim2}}>EXACT MATCH</div>
+                <div style={{fontFamily:T.fontDisplay,fontSize:mobile?"16px":"18px",fontWeight:700,color:T.green}}>{exact}/{count}</div>
               </div>
               <div>
-                <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"2px",color:T.dim2}}>WINNER PRED</div>
-                <div style={{fontFamily:T.fontDisplay,fontSize:"18px",fontWeight:700,
+                <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"2px",color:T.dim2}}>WINNER PRED</div>
+                <div style={{fontFamily:T.fontDisplay,fontSize:mobile?"16px":"18px",fontWeight:700,
                   color:correctWinner?T.green:T.red}}>
                   {correctWinner ? "✓ CORRECT" : "✗ MISS"}
                 </div>
               </div>
               <div>
-                <div style={{fontFamily:T.fontMono,fontSize:"8px",letterSpacing:"2px",color:T.dim2}}>TOP 3 ACC</div>
-                <div style={{fontFamily:T.fontDisplay,fontSize:"18px",fontWeight:700,color:T.yellow}}>
+                <div style={{fontFamily:T.fontMono,fontSize:mobile?"9px":"8px",letterSpacing:"2px",color:T.dim2}}>TOP 3 ACC</div>
+                <div style={{fontFamily:T.fontDisplay,fontSize:mobile?"16px":"18px",fontWeight:700,color:T.yellow}}>
                   {(() => {
                     const top3Pred = sorted.slice(0,3).map(p => p.driver_number);
                     const top3Actual = result.filter(r => r.position <= 3).map(r => r.driver_number);
