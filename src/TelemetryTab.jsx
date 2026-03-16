@@ -82,10 +82,19 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
   const drawTrack = useCallback((progA, progB) => {
     const canvas = canvasRef.current;
     if (!canvas || !trackPts) return;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const displayW = rect.width;
+    const displayH = rect.height;
+    if (canvas.width !== Math.round(displayW * dpr) || canvas.height !== Math.round(displayH * dpr)) {
+      canvas.width = Math.round(displayW * dpr);
+      canvas.height = Math.round(displayH * dpr);
+    }
     const ctx = canvas.getContext("2d");
-    const W = canvas.width, H = canvas.height;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = displayW, H = displayH;
     const pad = 40;
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Fit track in canvas preserving aspect ratio (OpenF1 x,y are proportional)
     const trackW = Math.max(...trackPts.map(([x]) => x)) - Math.min(...trackPts.map(([x]) => x)) || 1;
@@ -103,7 +112,7 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
       offsetY + (y - oy) * scale,
     ];
 
-    // --- Track outline glow ---
+    // --- Track outline (dark underlay for contrast) ---
     ctx.save();
     ctx.beginPath();
     trackPts.forEach(([x, y], i) => {
@@ -111,13 +120,10 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
       i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
     });
     ctx.closePath();
-    ctx.strokeStyle = "rgba(255,255,255,0.03)";
-    ctx.lineWidth = 20;
+    ctx.strokeStyle = "rgba(255,255,255,0.04)";
+    ctx.lineWidth = 18;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(255,255,255,0.05)";
-    ctx.lineWidth = 10;
     ctx.stroke();
     ctx.restore();
 
@@ -135,9 +141,8 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
       ctx.strokeStyle = color;
       ctx.lineWidth = 6;
       ctx.lineCap = "round";
-      ctx.globalAlpha = 0.9;
+      ctx.lineJoin = "round";
       ctx.stroke();
-      ctx.globalAlpha = 1;
     }
 
     // --- S/F line ---
@@ -395,9 +400,9 @@ export default function TelemetryTab({ sessionKey, drivers, mode }) {
             <div style={{width:`${progress*100}%`,height:"100%",background:`linear-gradient(90deg, ${T.red}, #ff6d00)`,
               boxShadow:`0 0 8px ${T.red}`,transition:"width .03s linear"}}/>
           </div>
-          <canvas ref={canvasRef} width={600} height={420}
+          <canvas ref={canvasRef}
             style={{width:"100%",height:mobile?"280px":"420px",background:T.bg1,borderRadius:"6px",
-              border:`1px solid ${T.border}`}}/>
+              border:`1px solid ${T.border}`,display:"block"}}/>
         </Card>
 
         <div style={{display:mobile?"grid":"flex",gridTemplateColumns:mobile?"1fr 1fr":undefined,
