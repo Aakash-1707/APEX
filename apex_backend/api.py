@@ -719,6 +719,14 @@ def predict(req: PredictRequest):
     - If only practice/sprint quali → estimate grid from best available data
     - If no session data → use driver list with team-based estimates
     """
+    # Check cache first
+    cache_key = _prediction_cache_key(req.meeting_key, req.session_key, req.race_session_key, req.n_sims, req.source_mode)
+    if not req.force_refresh:
+        cached = _load_cache(cache_key)
+        if cached:
+            cached["cached"] = True
+            return cached
+
     # Gather all sessions for this meeting
     try:
         sessions = _openf1("sessions", {"meeting_key": req.meeting_key})
@@ -981,6 +989,8 @@ def predict(req: PredictRequest):
         **result,
         "cached":           False,
     }
+
+    _save_cache(cache_key, output)
     return output
 
 
