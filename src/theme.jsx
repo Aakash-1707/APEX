@@ -21,7 +21,8 @@ export const T = {
   tyres:{ SOFT:"#FF3333",MEDIUM:"#FFE11A",HARD:"#E8E8E8",INTER:"#39B54A",WET:"#0067FF" },
 };
 
-export const API = "/api";
+const RENDER_BACKEND = import.meta.env.VITE_API_URL || "";
+export const API = `${RENDER_BACKEND}/api`;
 
 export async function apiFetch(path, opts={}) {
   const res = await fetch(`${API}${path}`, opts);
